@@ -1,0 +1,5 @@
+{
+  "name": "math-worksheet",
+  "version": "0.8.0",
+  "description": "Local ODE worksheets graded by SymPy, plus study guides and equation sheets for any class, in a browser window beside the chat"
+}

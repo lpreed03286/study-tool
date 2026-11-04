@@ -1,0 +1,5 @@
+{
+  "name": "study-tool",
+  "owner": { "name": "lpreed03286" },
+  "plugins": [{ "name": "math-worksheet", "source": "./" }]
+}
