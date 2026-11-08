@@ -7,7 +7,7 @@ from methods import NotApplicable, all_methods
 from verify import build_and_verify
 
 METHODS = all_methods()
-SAMPLES = [(m, s) for m in METHODS.values() for s in m.samples if m.id != "concept_questions"]
+SAMPLES = [(m, s) for m in METHODS.values() for s in m.samples if m.id not in ("concept_questions", "course_items")]
 
 
 @pytest.mark.parametrize("method,spec", SAMPLES, ids=[f"{m.id}:{s['statement']}" for m, s in SAMPLES])

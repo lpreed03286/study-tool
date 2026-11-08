@@ -28,6 +28,8 @@ from equiv import DIFFERENT, NUMERIC, PROVED, compare, evaluate, is_zero, numeri
 from mathparse import ParseFailure, Parsed, has_decimal, normalise_string, parse_answer, parse_list, parse_vector
 
 CORRECT, INCORRECT, RESTATE, UNPARSED = "correct", "incorrect", "restate", "unparsed"
+# Graded by plain comparison rather than SymPy, so decimals are expected, not refused.
+EXACT_OUTSIDE_CAS = {"numeric", "multiple_choice"}
 
 
 def dump(expr) -> str:
@@ -599,6 +601,63 @@ def check_choice(spec, latex, rename):
     raise _wrong(f"Not {picked}.", f"student chose {picked}; {spec.get('facts', '')}")
 
 
+def check_multiple_choice(spec, latex, rename):
+    """The page sends option indices, so options can hold math and two can read alike."""
+    match = re.fullmatch(r"\s*(?:\\text\{)?\s*choices:\s*([\d,\s]*)\}?\s*", latex)
+    picked = sorted({int(n) for n in re.findall(r"\d+", match.group(1))}) if match else []
+    options = spec["options"]
+    if not picked or any(n >= len(options) for n in picked):
+        raise _restate("Pick one of the options." if len(spec["correct"]) == 1 else "Pick the options that apply.")
+    chosen = "; ".join(options[n] for n in picked)
+    if picked == spec["correct"]:
+        return Result(CORRECT, "Correct.", "exact", readback=chosen)
+    if len(spec["correct"]) > 1 and set(picked) < set(spec["correct"]):
+        raise _wrong("Those are right, but there's more than that.", f"student chose {chosen}, a subset of the key")
+    raise _wrong("Not quite." if len(spec["correct"]) == 1 else "That isn't the right set of options.",
+                 f"student chose {chosen}")
+
+
+NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?")
+
+
+def _plain_unit(text: str) -> str:
+    text = re.sub(r"\\(?:text|mathrm|operatorname)\{([^{}]*)\}", r"\1", text)
+    text = re.sub(r"\\[,;:! ]|\s|[{}]", "", text)
+    return text.replace("\\cdot", "*").replace("\\times", "*").replace("\\mu", "µ").replace("\\Omega", "Ω")
+
+
+def _read_number(latex: str) -> tuple[float, str]:
+    """A number and whatever follows it. Decimals and powers of ten are fine here."""
+    text = re.sub(r"\\[,;:! ]|\s", "", latex.strip())
+    text = re.sub(r"^\\text\{(.*)\}$", r"\1", text).replace("−", "-").replace("{,}", ".")
+    text = re.sub(r"(?:\\times|\\cdot|\*|x)10\^\{?([+-]?\d+)\}?", r"e\1", text)
+    match = NUMBER.match(text)
+    if match:
+        return float(match.group()), text[match.end():]
+    try:
+        value = parse_answer(latex).parts[-1]
+    except ParseFailure:
+        raise _restate("Enter a number, like 9.81 or 1.5\\times 10^{-3}.")
+    if value.free_symbols:
+        raise _restate("Enter a number, not an expression with variables.")
+    return float(sp.N(value)), ""
+
+
+def check_numeric(spec, latex, rename):
+    value, rest = _read_number(latex)
+    unit = spec.get("unit") or ""
+    if rest and _plain_unit(rest) != _plain_unit(unit):
+        raise _restate(f"Enter just the number in {unit}; the unit is already given." if unit
+                       else "Enter just a number, with no unit.")
+    key = spec["value"]
+    error = abs(value - key)
+    allowed = spec["absolute"] if spec.get("absolute") is not None else spec["relative"] * abs(key)
+    # A hair of slack so a tolerance like 0.01 accepts exactly 0.01 off despite binary floats.
+    if error <= allowed * (1 + 1e-9) + 1e-12 * max(1.0, abs(key)):
+        return Result(CORRECT, "Correct.", "within tolerance", readback=f"{value:g}" + (f" {unit}" if unit else ""))
+    raise _wrong("Not within the allowed range.", f"student gave {value:g}, key {key:g}, allowed error {allowed:g}")
+
+
 def check_discussion(spec, latex, rename):
     raise _restate("A discussion is judged from your written answer.")
 
@@ -609,6 +668,8 @@ CHECKS = {
     "matrix": check_matrix,
     "system_solution": check_system_solution,
     "choice": check_choice,
+    "multiple_choice": check_multiple_choice,
+    "numeric": check_numeric,
     "discussion": check_discussion,
     "expr": check_expr,
     "equation": check_equation,
@@ -627,7 +688,7 @@ CHECKS = {
 def grade(spec: dict, latex: str, rename: dict | None = None, answer: str = "") -> Result:
     if not latex or not latex.strip():
         return Result(UNPARSED, "Enter an answer first.")
-    if has_decimal(latex):
+    if has_decimal(latex) and spec["kind"] not in EXACT_OUTSIDE_CAS:
         return Result(RESTATE, "Keep it exact: use a fraction like \\frac{1}{2}, not a decimal.",
                       diagnosis="student used a decimal")
     kind = spec["kind"]

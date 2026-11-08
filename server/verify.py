@@ -47,6 +47,8 @@ def verify_plan(plan: dict) -> dict:
         return _verify_system(plan)
     if plan.get("kind") == "concept":
         return _verify_concept(plan)
+    if plan.get("kind") == "course":
+        return _verify_course(plan)
     x = sp.Symbol(plan["x"])
     residual = load(plan["residual"])
     order = plan["order"]
@@ -351,6 +353,36 @@ def _verify_concept(plan: dict) -> dict:
             if has_decimal(math):
                 raise VerificationFailed(f"step {step['id']}: the reference answer has a decimal: {math}")
     return {"concept": "Reference answers were written by Claude and not checked by SymPy"}
+
+
+def _verify_course(plan: dict) -> dict:
+    """Exact items must pass their own check and refuse a wrong answer. Short answers are only
+    as good as Claude's reference, and the report says so."""
+    judged = 0
+    for step in plan["steps"]:
+        check = step["check"]
+        if check.get("concept"):
+            if not step["answer"].strip():
+                raise VerificationFailed(f"step {step['id']}: the question has no reference answer")
+            judged += 1
+            continue
+        if check["kind"] == "multiple_choice":
+            right = "choices:" + ",".join(map(str, check["correct"]))
+            others = [n for n in range(len(check["options"])) if n not in check["correct"]]
+            wrong = f"choices:{others[0]}" if others else None
+        else:
+            allowed = check["absolute"] if check.get("absolute") is not None else check["relative"] * abs(check["value"])
+            right = repr(check["value"])
+            wrong = repr(check["value"] + 2 * allowed + 1 + abs(check["value"]))
+        result = grade(check, right)
+        if result.status != CORRECT:
+            raise VerificationFailed(f"step {step['id']}: its own key fails its check: {result.message}")
+        if wrong is not None and grade(check, wrong).status == CORRECT:
+            raise VerificationFailed(f"step {step['id']}: its check accepted a wrong answer")
+    report = {"exact": "Multiple choice and numeric keys pass their own exact checks"}
+    if judged:
+        report["judged"] = f"{judged} short answer reference(s) were written by Claude and not checked by SymPy"
+    return report
 
 
 def _self_test(plan: dict) -> str:

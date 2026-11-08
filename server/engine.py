@@ -11,8 +11,10 @@ import hashlib
 import json
 import math
 import re
+import sys
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -33,6 +35,8 @@ FORM_KINDS = {"worksheet", *DOC_KINDS}
 EXAMPLE_SECONDS = 240
 DOC_BASE_SECONDS = 60
 CONCEPT_METHOD = "concept_questions"  # Teaches no section's technique, so it needs no repertoire check.
+COURSE_METHOD = "course_items"  # Course check items aren't a textbook technique either.
+COURSE_LOG_PREFIX = "course:"  # Course misses are kept apart, so they can't shift ODE study plans.
 
 
 class UserError(Exception):
@@ -478,7 +482,107 @@ class Engine:
             raise UserError("A lesson is a study guide, so make it with create_doc.")
         section = request.get("section") or None
         self.courses.check_link(course_id, section, role, bool(request.get("regenerate")))
+        if made == "set":
+            self._check_course_sections(course_id, section, role, request.get("problems") or [])
         return {"id": course_id, "section": section if role != "placement" else None, "role": role}
+
+    def _check_course_sections(self, course_id: str, section: str | None, role: str, problems: list[dict]) -> None:
+        if role == "placement":
+            wanted = self.courses.get(course_id)["placement"]["sections"]
+            stray = sorted({str(p.get("section")) for p in problems} - set(wanted))
+            if stray:
+                raise UserError(f"Each placement item's section has to be one the placement covers ({', '.join(wanted)}), "
+                                f"not {', '.join(stray)}.")
+            empty = [s for s in wanted if not any(p.get("section") == s for p in problems)]
+            if empty:
+                raise UserError(f"The placement check has nothing for {', '.join(empty)}.")
+            return
+        stray = sorted({str(p.get("section")) for p in problems if p.get("section") != section})
+        if stray:
+            raise UserError(f"Every problem in this set is for section {section}, so set each problem's section to "
+                            f"{section}, not {', '.join(stray)}.")
+
+    def _prompt_set(self, worksheet: dict) -> dict:
+        """Adds what a tutor needs to know about the course, for a set that belongs to one."""
+        link = worksheet.get("course")
+        if not link:
+            return worksheet
+        try:
+            course = self.courses.get(link["id"])
+        except CourseError:
+            return worksheet
+        plan = course.get("plan") or {}
+        presentation = plan.get("presentation") or {}
+        return {**worksheet, "course_context": {
+            "title": course["title"], "goal": course["intake"]["goal"], "background": course["intake"]["background"],
+            "style": presentation.get("style", ""), "notes": presentation.get("notes", "")}}
+
+    def _course_progress(self, set_id: str) -> None:
+        """Records a finished course check. Never lets a course problem break the worksheet."""
+        try:
+            worksheet = self.load_set(set_id)
+            if not worksheet.get("course"):
+                return
+            owner = self.courses.owner_of_set(set_id)
+            if owner is None or owner[2] == "practice":
+                return
+            course, section, role = owner
+            progress = self.load_progress(set_id)
+            exam = progress.get("exam")
+            if exam and exam.get("submitted_at"):
+                if exam["results"]["score"]["pending"]:
+                    return
+                items, when = self._exam_items(worksheet, progress, exam), exam["submitted_at"]
+            elif role == "check" and not exam:
+                items, when = self._practice_items(worksheet, progress), 0.0
+            else:
+                return  # Placement counts only as one exam, with no hints.
+            if items is None:
+                return
+            if role == "placement":
+                by_section: dict[str, list[dict]] = {}
+                for item in items:
+                    by_section.setdefault(item["section"], []).append(item)
+                self.courses.record_placement(course["id"], by_section, when)
+            else:
+                self.courses.record_check(course["id"], section["id"], set_id, items, when)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+
+    @staticmethod
+    def _item(problem: dict, step: dict, **result) -> dict:
+        return {"section": problem.get("section", ""), "objective": step.get("objective") or step["type"],
+                "judged_by_claude": bool(step["check"].get("concept")), **result}
+
+    def _practice_items(self, worksheet: dict, progress: dict) -> list[dict] | None:
+        """None until every step is resolved. A pre-filled step showed its answer, so it doesn't count."""
+        items = []
+        for problem in worksheet["problems"]:
+            if self._is_skipped(progress, problem):
+                items += [self._item(problem, step, correct=False, skipped=True) for step in problem["plan"]["steps"]]
+                continue
+            state = self._problem_state(progress, problem)
+            statuses = self._status_list(problem, state, self._resolve_fade(progress, state))
+            if "unresolved" in statuses:
+                return None
+            for step, status in zip(problem["plan"]["steps"], statuses):
+                record = self._step_state(state, step)
+                items.append(self._item(problem, step, correct=status == "correct", skipped=status == "skipped",
+                                        hinted=1 <= record["hint_level"] <= 2,
+                                        answer_shown=record["hint_level"] >= 3 or status == "prefilled",
+                                        judged_by_claude=bool(step["check"].get("concept") or (record["own"] or {}).get("state") == "valid")))
+        return items
+
+    def _exam_items(self, worksheet: dict, progress: dict, exam: dict) -> list[dict]:
+        results = exam["results"]["problems"]
+        items = []
+        for problem in worksheet["problems"]:
+            rows = results.get(problem["id"])
+            for step in problem["plan"]["steps"]:
+                row = (rows or {}).get(step["id"])
+                # A problem skipped before the exam still counts against the check.
+                items.append(self._item(problem, step, correct=bool(row) and row["status"] == "correct", skipped=row is None))
+        return items
 
     def course_create(self, args: dict) -> dict:
         course = self.courses.create(args)
@@ -510,11 +614,15 @@ class Engine:
 
     def course_save_plan(self, args: dict) -> dict:
         course = self.courses.save_plan(args.get("course", ""), args.get("plan") or {}, args.get("change", ""))
+        if args.get("request_id"):
+            self.dismiss_request(args["request_id"])
         return {"ok": True, "course": course["id"], "phase": course["phase"], "plan": course["plan"]}
 
     def course_save_syllabus(self, args: dict) -> dict:
         course = self.courses.save_syllabus(args.get("course", ""), args.get("chapters") or [],
                                             bool(args.get("partial")), args.get("change", ""))
+        if args.get("request_id"):
+            self.dismiss_request(args["request_id"])
         return {"ok": True, "course": course["id"], "phase": course["phase"],
                 "sections": [{"id": s["id"], "status": s["status"]} for s in self.courses.sections(course)]}
 
@@ -573,7 +681,7 @@ class Engine:
         coverage = read_json(self._coverage_path, {})
         missing = []
         for problem in problems:
-            if problem.get("method") == CONCEPT_METHOD:
+            if problem.get("method") in (CONCEPT_METHOD, COURSE_METHOD):
                 continue
             section = problem.get("section")
             if not section:
@@ -610,6 +718,13 @@ class Engine:
                 entry["hints_used"][kind[-1]] += 1
             write_json(self._log_path, log)
 
+    @staticmethod
+    def _log_type(worksheet: dict, step: dict) -> str:
+        link = worksheet.get("course")
+        if not link:
+            return step["type"]
+        return f"{COURSE_LOG_PREFIX}{link['id']}:{step.get('objective') or step['type']}"
+
     def _miss_rate(self, entry: dict | None) -> float:
         """Smoothed so a single miss doesn't dominate and an unseen type stays neutral."""
         if not entry:
@@ -643,12 +758,14 @@ class Engine:
         weak = sorted(
             ({"step_type": t, "miss_rate": round(rates[t], 3),
               "attempts": e["attempts"], "first_try_misses": e["first_try_misses"]}
-             for t, e in log["step_types"].items() if e["first_try_misses"]),
+             for t, e in log["step_types"].items() if e["first_try_misses"] and not t.startswith(COURSE_LOG_PREFIX)),
             key=lambda row: -row["miss_rate"])
         return {"allocation": allocation, "weak_spots": weak[:8]}
 
     def error_log(self) -> dict:
-        return read_json(self._log_path, {"step_types": {}})
+        """The worksheet error log. Course misses live in their course's results instead."""
+        log = read_json(self._log_path, {"step_types": {}})
+        return {**log, "step_types": {t: e for t, e in log["step_types"].items() if not t.startswith(COURSE_LOG_PREFIX)}}
 
     # --- Practice ------------------------------------------------------------
 
@@ -735,24 +852,25 @@ class Engine:
             record["readback"] = graded.get("readback", "")
             if graded["status"] == "correct":
                 if record["attempts"] == 0:
-                    self._log_event(step["type"], "first_attempt")
+                    self._log_event(self._log_type(worksheet, step), "first_attempt")
                 record["correct"] = True
                 record["confidence"] = graded.get("confidence", "")
                 record["attempts"] += 1
                 state.setdefault("rename", {}).update(graded.get("rename") or {})
             elif graded["status"] == "incorrect":
                 if record["attempts"] == 0:
-                    self._log_event(step["type"], "first_miss", {
+                    self._log_event(self._log_type(worksheet, step), "first_miss", {
                         "set": set_id, "problem": problem_id, "step": step_id,
                         "answer": latex, "at": time.time(),
                     })
                 else:
-                    self._log_event(step["type"], "wrong")
+                    self._log_event(self._log_type(worksheet, step), "wrong")
                 record["attempts"] += 1
                 record["wrong"] += 1
                 record["last_wrong"] = latex
                 record["diagnosis"] = graded.get("diagnosis", "")
             self.save_progress(set_id, progress)
+        self._course_progress(set_id)
         return self.view(set_id, problem_id)
 
     def draft(self, set_id: str, problem_id: str, step_id: str, latex: str) -> None:
@@ -780,7 +898,7 @@ class Engine:
             record = self._step_state(state, step)
             if record["hint_level"] < 3:
                 record["hint_level"] += 1
-                self._log_event(step["type"], f"hint{record['hint_level']}")
+                self._log_event(self._log_type(worksheet, step), f"hint{record['hint_level']}")
             self.save_progress(set_id, progress)
         return self.view(set_id, problem_id)
 
@@ -810,6 +928,7 @@ class Engine:
                 raise UserError("That step isn't the one open right now.")
             self._step_state(state, step)["skipped"] = True
             self.save_progress(set_id, progress)
+        self._course_progress(set_id)
         return self.view(set_id, problem_id)
 
     def unskip_step(self, set_id: str, problem_id: str, step_id: str) -> dict:
@@ -838,6 +957,7 @@ class Engine:
             following = next((p for p in after if not self._is_skipped(progress, p)), problem)
             progress["active"] = following["id"]
             self.save_progress(set_id, progress)
+        self._course_progress(set_id)
         return self.view(set_id, following["id"])
 
     def unskip_problem(self, set_id: str, problem_id: str) -> dict:
@@ -887,7 +1007,7 @@ class Engine:
             pending = self._explaining(set_id, problem_id, step_id, answer)
             if pending:
                 return {"ask": pending, "view": self.view(set_id, problem_id)}
-            request = prompts.explain(worksheet, problem, step, answer, record["readback"], record["diagnosis"])
+            request = prompts.explain(self._prompt_set(worksheet), problem, step, answer, record["readback"], record["diagnosis"])
             ask_id = self._start_ask(request, {
                 "kind": "explain", "set": set_id, "problem": problem_id, "step": step_id, "answer": answer,
                 "fallback": record["diagnosis"],
@@ -912,7 +1032,7 @@ class Engine:
             state = self._problem_state(progress, problem)
             if state.get("walkthrough"):
                 return {"ask": None, "view": self.view(set_id, problem_id)}
-            request = prompts.walkthrough(worksheet, problem, problem["plan"]["steps"])
+            request = prompts.walkthrough(self._prompt_set(worksheet), problem, problem["plan"]["steps"])
             ask_id = self._start_ask(request, {"kind": "walkthrough", "set": set_id, "problem": problem_id})
         return {"ask": ask_id, "view": self.view(set_id, problem_id)}
 
@@ -938,7 +1058,7 @@ class Engine:
             record["own"] = {"work": work, "result": result, "state": "pending", "reason": "",
                              "cas": cas["status"]}
             self.save_progress(set_id, progress)
-            request = prompts.judge(worksheet, problem, step, work, result, _cas_note(cas))
+            request = prompts.judge(self._prompt_set(worksheet), problem, step, work, result, _cas_note(cas))
             ask_id = self._start_ask(request, {
                 "kind": "own_method", "set": set_id, "problem": problem_id, "step": step_id,
                 "cas": cas["status"], "rename": cas.get("rename") or {},
@@ -1001,7 +1121,7 @@ class Engine:
             result = exam["results"]["problems"][meta["problem"]][meta["step"]]
             result.update({"status": "correct" if valid else "incorrect", "message": reason, "pending": False})
             if not valid:
-                self._log_event(step["type"], "first_miss", {"set": meta["set"], "problem": meta["problem"],
+                self._log_event(self._log_type(worksheet, step), "first_miss", {"set": meta["set"], "problem": meta["problem"],
                                                              "step": meta["step"], "answer": "own method", "at": time.time()})
             self._tally_exam(worksheet, exam)
         else:
@@ -1010,7 +1130,7 @@ class Engine:
             record["own"].update({"state": "valid" if valid else "invalid", "reason": reason})
             if valid:
                 if record["attempts"] == 0:
-                    self._log_event(step["type"], "first_attempt")
+                    self._log_event(self._log_type(worksheet, step), "first_attempt")
                 record["correct"] = True
                 record["confidence"] = meta.get("confidence") or ("own method: Claude's judgement" + (", result confirmed by SymPy" if meta["cas"] == "correct" else ""))
                 record["message"] = "Accepted."
@@ -1020,12 +1140,13 @@ class Engine:
                 state.setdefault("rename", {}).update(meta.get("rename") or {})
             elif verdict["valid"] is not None:
                 if record["attempts"] == 0:
-                    self._log_event(step["type"], "first_miss", {"set": meta["set"], "problem": meta["problem"],
+                    self._log_event(self._log_type(worksheet, step), "first_miss", {"set": meta["set"], "problem": meta["problem"],
                                                                  "step": meta["step"], "answer": "own method", "at": time.time()})
                 else:
-                    self._log_event(step["type"], "wrong")
+                    self._log_event(self._log_type(worksheet, step), "wrong")
                 record["attempts"] += 1
         self.save_progress(meta["set"], progress)
+        self._course_progress(meta["set"])
 
     # --- Exam ----------------------------------------------------------------
 
@@ -1089,9 +1210,9 @@ class Engine:
                     row.update({"pending": True, "own": True, "work": own["work"]})
                     asks.append((problem, step, own, graded))
                 elif graded["status"] == "correct":
-                    self._log_event(step["type"], "first_attempt")
+                    self._log_event(self._log_type(worksheet, step), "first_attempt")
                 elif graded["status"] in ("incorrect", "blank"):
-                    self._log_event(step["type"], "first_miss", {
+                    self._log_event(self._log_type(worksheet, step), "first_miss", {
                         "set": set_id, "problem": problem["id"], "step": step["id"],
                         "answer": latex, "at": time.time(), "exam": True,
                     })
@@ -1104,9 +1225,10 @@ class Engine:
             self._tally_exam(worksheet, exam)
             self.save_progress(set_id, progress)
             for problem, step, own, graded in asks:
-                request = prompts.judge(worksheet, problem, step, own["work"], own.get("result", ""), _cas_note(graded))
+                request = prompts.judge(self._prompt_set(worksheet), problem, step, own["work"], own.get("result", ""), _cas_note(graded))
                 self._start_ask(request, {"kind": "own_method", "exam": True, "set": set_id, "problem": problem["id"],
                                           "step": step["id"], "cas": graded["status"]})
+        self._course_progress(set_id)
         return self.view(set_id)
 
     def _tally_exam(self, worksheet: dict, exam: dict) -> None:
@@ -1315,10 +1437,15 @@ def _judged_by(step: dict) -> str:
 def _step_shape(step: dict) -> dict:
     """What the page needs to draw a step's input. Figures are hidden until the step opens."""
     kind = step["check"]["kind"]
-    shape = {"input": {"choice": "choice", "discussion": "discussion"}.get(kind, "math"),
+    shape = {"input": {"choice": "choice", "discussion": "discussion", "multiple_choice": "multiple_choice",
+                       "numeric": "numeric"}.get(kind, "math"),
              "figures": step.get("figures", [])}
-    if kind == "choice":
+    if kind in ("choice", "multiple_choice"):
         shape["options"] = step["options"]
+    if kind == "multiple_choice":
+        shape["multi"] = bool(step.get("multi"))
+    if kind == "numeric":
+        shape["unit"] = step.get("unit", "")
     if step["check"].get("concept"):
         shape["placeholder"] = "Write your answer. Use $...$ for math."
     return shape

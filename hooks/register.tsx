@@ -263,6 +263,7 @@ const TOOLS: ToolDefinition[] = [
       properties: {
         course: COURSE_ID,
         change: { type: 'string', description: 'What changed and why, for the history' },
+        request_id: { type: 'string', description: "From the course page, when the request names one" },
         plan: {
           type: 'object',
           properties: {
@@ -307,6 +308,7 @@ const TOOLS: ToolDefinition[] = [
         course: COURSE_ID,
         partial: { type: 'boolean' },
         change: { type: 'string', description: 'What changed, for the history' },
+        request_id: { type: 'string', description: "From the course page, when the request names one" },
         chapters: {
           type: 'array',
           items: {

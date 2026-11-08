@@ -6,6 +6,7 @@ import sympy as sp
 
 import figures
 import systems
+from course_items import SAMPLES as COURSE_SAMPLES, build_course_items
 from grade import dump
 from methods import (Method, NotApplicable, ODE, combine, constant_names, dy, expr_check, general_step,
                      homogeneous_basis, ivp_steps, make_step, plan, tex)
@@ -650,6 +651,15 @@ def build_ode_to_system(spec: dict, notation: dict) -> dict:
 
 
 METHODS = [
+    Method(
+        "course_items", "Course check items (experimental)",
+        "Multiple choice and numeric items graded exactly by the server, and short answers judged by Claude.",
+        "any subject: a section's check in an experimental course, each item tagged with its objective",
+        "no derivations: math problems use the ordinary repertoire methods; short answers aren't checked by SymPy",
+        ["course_choice", "course_numeric", "course_short_answer"],
+        build_course_items,
+        COURSE_SAMPLES,
+    ),
     Method(
         "concept_questions", "Concept questions",
         "Short written questions on when and why methods apply. Claude judges each answer.",
