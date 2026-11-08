@@ -52,6 +52,16 @@ def test_one_sentence_is_enough_to_start_and_the_phases_move_forward(courses):
         courses.create({"goal": "  "})
 
 
+def test_intention_and_end_goal_are_kept_and_shown_first(courses):
+    course = courses.create({"goal": "Rust", "intention": "project", "intention_details": "A CLI tool at work",
+                             "end_goal": "Write a small command-line tool with error handling"})
+    text = courses.overview(course["id"])["overview"]
+    assert "Learning it for: a project; A CLI tool at work" in text
+    assert "By the end, able to: Write a small command-line tool" in text
+    with pytest.raises(CourseError, match="intention"):
+        courses.create({"goal": "Rust", "intention": "fun"})
+
+
 def test_a_syllabus_waits_for_the_plan(courses):
     course = courses.create({"goal": "Rust"})
     with pytest.raises(CourseError, match="plan"):
@@ -609,14 +619,19 @@ def test_ode_prompts_are_unchanged_and_course_prompts_describe_the_course():
                                                  "background": "Plays guitar by ear", "style": "Analogy-heavy", "notes": ""}}
     judged = prompts.concept_answer(course, problem, step, "x")
     assert "teaching themselves Music Theory" in judged["system"] and "Plays guitar by ear" in judged["system"]
+    aimed = prompts.concept_answer({**course, "course_context": {**course["course_context"], "intention": "a project",
+                                   "intention_details": "A band", "end_goal": "Write a song"}}, problem, step, "x")
+    assert "learning it for: a project; A band" in aimed["system"] and "Write a song" in aimed["system"]
     assert "differential" not in judged["system"] and "never use decimals" not in judged["prompt"]
     assert '{"valid": true or false' in judged["prompt"]
 
 
 def test_course_requests_name_the_course_section_and_request():
-    started_text = prompts.new_set({"kind": "course", "goal": "Rust", "background": "", "time_per_week": "3 hours",
+    started_text = prompts.new_set({"kind": "course", "goal": "Rust", "intention": "work", "intention_details": "",
+                                    "end_goal": "Ship a CLI", "background": "", "time_per_week": "3 hours",
                                     "materials": "", "library_class": ""}, "r1")
     assert "make-course skill" in started_text and 'request_id "r1"' in started_text and "3 hours" in started_text
+    assert "(pass as intention): work" in started_text and "By the end I want to be able to: Ship a CLI" in started_text
     step_text = prompts.new_set({"kind": "next_section", "course": "rust", "section": "c1-s2"}, "r2")
     assert "course rust, section c1-s2" in step_text and "step 5" in step_text and 'request_id "r2"' in step_text
 

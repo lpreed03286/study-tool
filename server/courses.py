@@ -21,7 +21,11 @@ DONE = {MASTERED, TESTED_OUT}
 ASSESSMENT_KINDS = ("multiple_choice", "numeric", "short_answer", "math")
 EXAMPLES = ("worked_first", "after_theory", "none")
 ROLES = ("lesson", "check", "practice", "placement")
-INTAKE_FIELDS = ("goal", "background", "time_per_week", "materials", "library_class")
+INTAKE_FIELDS = ("goal", "intention", "intention_details", "end_goal", "background", "time_per_week", "materials",
+                 "library_class")
+# Why the student is learning it. It shapes depth, pacing and what the checks focus on.
+INTENTIONS = {"class": "a class or exam", "project": "a project", "work": "work or a job", "curiosity": "curiosity",
+              "other": "something else"}
 DEFAULT_PLAN = {
     "presentation": {"style": "", "examples": "worked_first", "figures": True, "notes": ""},
     "assessment": {"default_kinds": ["multiple_choice", "short_answer"], "per_section_override": True},
@@ -164,6 +168,8 @@ class Courses:
         intake = {name: _text(args.get(name), name.replace("_", " ")) for name in INTAKE_FIELDS}
         if not intake["goal"]:
             raise CourseError("Give the goal: even one sentence on what you want to learn is enough.")
+        if intake["intention"] and intake["intention"] not in INTENTIONS:
+            raise CourseError(f"intention has to be one of: {', '.join(INTENTIONS)}.")
         title = _text(args.get("title"), "title") or intake["goal"][:60]
         with self.lock:
             course = {
@@ -522,6 +528,12 @@ class Courses:
         intake = course["intake"]
         lines = [f"# {course['title']} (experimental course, id {course['id']})", f"Phase: {course['phase']}",
                  f"Goal: {intake['goal']}"]
+        if intake.get("intention") or intake.get("intention_details"):
+            why = INTENTIONS.get(intake.get("intention"), "")
+            details = intake.get("intention_details", "")[:200]
+            lines.append("Learning it for: " + ("; ".join(part for part in (why, details) if part)))
+        if intake.get("end_goal"):
+            lines.append(f"By the end, able to: {intake['end_goal'][:300]}")
         for name in ("background", "time_per_week", "library_class"):
             if intake.get(name):
                 lines.append(f"{name.replace('_', ' ').capitalize()}: {intake[name][:200]}")

@@ -289,8 +289,10 @@ const HELP_GROUPS = [
       {
         id: "courses", title: "Courses (experimental)",
         what: "A course teaches a topic you're new to, one section at a time. Each section has a lesson and a check, and it opens once you've mastered the sections it builds on. [[Courses]] on the home page lists yours. Courses are experimental, so expect rough edges.",
-        example: "Press [[New]], choose Course (experimental), and write: Orbital mechanics, for a CubeSat project at school. Claude researches it, then agrees a teaching style, the kinds of checks, how much counts as mastered, and a syllabus with you in the terminal.",
+        example: "Press [[New]], choose Course (experimental), and write Orbital mechanics. Set what it's for to A project, add A CubeSat project at school, and for the end write: plan a satellite's orbit and work out its period. Claude researches it, then agrees a teaching style, the kinds of checks, how much counts as mastered, and a syllabus with you in the terminal.",
         how: [
+          "What it's for and the end goal shape the course: an exam course sticks to the exam's scope, and a project course skips theory the project doesn't need. The syllabus is planned backward from your end goal.",
+          "To build a course from your own files, add them on the Library page under a class name, then pick that class in Use my library.",
           "[[Generate]] on an available section makes its lesson and check. Only one section is made at a time.",
           "A check counts once every item is answered or skipped. An item counts if it's right without opening the answer hint, and a few nudges or method hints are fine, up to the limit in your plan.",
           "Multiple choice and numeric items are graded exactly by the program. Short answers are judged by Claude, and the page says so.",

@@ -15,11 +15,18 @@ For anything shared with other documents, follow the other skills instead of rep
 
 ## 2. Intake
 
-The request gives a goal and maybe a background, time per week, material they have, and a library class. A single sentence is enough to start.
+The request gives a goal, and maybe what it's for (`intention`: `class`, `project`, `work`, `curiosity` or `other`, with `intention_details`), what they want to be able to do by the end (`end_goal`), a background, time per week, material they have, and a library class. A single sentence is enough to start.
 
-If it's too thin to research, such as "physics" with nothing else, ask at most 3 short questions in the terminal. Ask what they want to be able to do, what they already know, and how much time they have. Otherwise go ahead.
+If it's too thin to research, such as "physics" with nothing else, ask at most 3 short questions in the terminal. Ask what it's for, what they want to be able to do by the end, and what they already know. Otherwise go ahead.
 
 Call `course_create` with what they gave, a short `title`, and `request_id` if the request names one.
+
+The intention and end goal shape everything after this:
+
+- **A class or exam:** match the class's scope and notation, use their library first, and weight checks toward the kinds of problems the exam will have.
+- **A project or work:** start from what the project needs and leave out theory it doesn't use. Prefer applied numeric items.
+- **Curiosity:** favour intuition, history and examples over drilling, with lighter checks.
+- **End goal:** make it the last chapter's objectives, then plan backward: each earlier section should be something the end goal needs.
 
 ## 3. Research
 
@@ -38,7 +45,7 @@ Then propose a draft syllabus in the terminal:
 - 1 to 4 objectives for each section, each something the student can show they can do, such as "Compute an orbital period from the semi-major axis".
 - Prerequisites, using section ids. Keep them minimal, since an extra prerequisite only delays the student.
 
-Base it on the research, and say where it follows a source and where it's your own judgement.
+Base it on the research, and say where it follows a source and where it's your own judgement. Show how the syllabus leads to their end goal, if they gave one.
 
 ## 4. Planning
 

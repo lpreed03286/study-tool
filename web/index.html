@@ -140,7 +140,21 @@
       </div>
       <div class="only-course">
         <p class="muted">Courses are experimental. Claude researches the topic, agrees a plan and syllabus with you in the terminal, then makes one section at a time.</p>
-        <label>What do you want to learn, and why? <textarea id="new-goal" rows="2" placeholder="Orbital mechanics, for a CubeSat project at school"></textarea></label>
+        <label>What do you want to learn? <textarea id="new-goal" rows="2" placeholder="Orbital mechanics"></textarea></label>
+        <div class="form-pair">
+          <label>What it's for (optional)
+            <select id="new-intention">
+              <option value="">Not saying</option>
+              <option value="class">A class or exam</option>
+              <option value="project">A project</option>
+              <option value="work">Work or a job</option>
+              <option value="curiosity">Curiosity</option>
+              <option value="other">Something else</option>
+            </select>
+          </label>
+          <label>More about why (optional) <input id="new-intention-details" type="text" placeholder="A CubeSat project at school"></label>
+        </div>
+        <label>By the end I want to be able to... (optional) <input id="new-end-goal" type="text" placeholder="Plan a satellite's orbit and work out its period"></label>
         <label>What you already know (optional) <input id="new-background" type="text" placeholder="Calculus and intro physics"></label>
         <div class="form-pair">
           <label>Time each week (optional) <input id="new-time" type="text" placeholder="3 hours"></label>

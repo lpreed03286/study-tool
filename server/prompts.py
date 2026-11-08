@@ -56,7 +56,10 @@ def _new_index(form: dict, request_id: str) -> str:
 def new_course(form: dict, request_id: str) -> str:
     lines = ["Start a course with the make-course skill. I asked for it with the form on the worksheet page. "
              "Courses are experimental.", f"What I want to learn: {form['goal']}"]
-    for name, label in (("background", "My background"), ("time_per_week", "Time I have each week"),
+    if form.get("intention"):
+        lines.append(f"What I'm learning it for (pass as intention): {form['intention']}")
+    for name, label in (("intention_details", "More about why"), ("end_goal", "By the end I want to be able to"),
+                        ("background", "My background"), ("time_per_week", "Time I have each week"),
                         ("materials", "Material I already have")):
         if form.get(name):
             lines.append(f"{label}: {form[name]}")
@@ -143,6 +146,11 @@ def _format(worksheet: dict) -> str:
 def _course_system(course: dict) -> str:
     lines = [f"You tutor a student who is teaching themselves {course['title']} in a self-paced course.",
              f"Their goal: {course['goal']}"]
+    why = "; ".join(part for part in (course.get("intention"), course.get("intention_details")) if part)
+    if why:
+        lines.append(f"They're learning it for: {why}. Keep explanations relevant to that.")
+    if course.get("end_goal"):
+        lines.append(f"By the end of the course they want to be able to: {course['end_goal']}")
     if course.get("background"):
         lines.append(f"Their background, so pitch your explanation at this level: {course['background']}")
     if course.get("style") or course.get("notes"):

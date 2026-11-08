@@ -1665,18 +1665,27 @@ def test_the_new_form_starts_a_course_and_it_shows_on_the_courses_page(server, h
     home.errors.clear()
     goal = f"Music theory from zero {time.time_ns()}"
     home.fill("#new-goal", goal)
+    home.select_option("#new-intention", "class")
+    home.fill("#new-end-goal", "Read a lead sheet")
     home.fill("#new-time", "2 hours")
     home.locator("#new-submit").click()
     sent = wait_for_prompt(server, before)
     assert "make-course" in sent["text"] and goal in sent["text"] and "2 hours" in sent["text"]
+    assert "(pass as intention): class" in sent["text"] and "Read a lead sheet" in sent["text"]
     assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0, "course requests live on the Courses page"
 
     home.locator("#courses-link").click()
     home.locator(f".set-row[data-request='{sent['id']}']").wait_for()
-    made = server.tool("course_create", goal=goal, request_id=sent["id"])
+    made = server.tool("course_create", goal=goal, intention="class", end_goal="Read a lead sheet", request_id=sent["id"])
     row = home.locator(f".set-row[data-course='{made['course']}']")
     row.wait_for(timeout=8000)
     assert "Experimental" in row.inner_text() and "Researching" in row.inner_text()
+    row.click()
+    home.locator("[data-aims]").wait_for()
+    assert "For a class or exam" in home.locator("[data-aims]").inner_text()
+    assert "By the end: Read a lead sheet" in home.locator("[data-aims]").inner_text()
+    home.go_back()
+    home.locator(f".set-row[data-course='{made['course']}']").wait_for()
     assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0
     assert f"token={server.token}" in home.locator("#home-link").get_attribute("href")
     home.screenshot(path=SHOTS / f"60-courses-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")

@@ -237,6 +237,9 @@ const TOOLS: ToolDefinition[] = [
       properties: {
         title: { type: 'string' },
         goal: { type: 'string' },
+        intention: { type: 'string', enum: ['class', 'project', 'work', 'curiosity', 'other'], description: "What it's for: a class or exam, a project, work, curiosity, or something else" },
+        intention_details: { type: 'string', description: 'More about why, such as which exam or project' },
+        end_goal: { type: 'string', description: 'What the student wants to be able to do by the end' },
         background: { type: 'string' },
         time_per_week: { type: 'string' },
         materials: { type: 'string' },

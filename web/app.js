@@ -1299,6 +1299,7 @@ async function submitNewForm(event) {
       count: $("new-count").value, difficulty: $("new-difficulty").value,
       focus: $("new-focus").value, typed: $("new-typed").value, pages: $("new-pages").value,
       goal: $("new-goal").value, background: $("new-background").value, time_per_week: $("new-time").value,
+      intention: $("new-intention").value, intention_details: $("new-intention-details").value, end_goal: $("new-end-goal").value,
       materials: $("new-materials").value,
     };
     const library = await api("/api/action", { method: "POST", body: JSON.stringify({ action: "request_set", form }) });
@@ -1346,6 +1347,7 @@ const PHASE_NOTES = {
 };
 const STATUS_NAMES = { locked: "Locked", available: "Available", generating: "Being made", in_progress: "In progress",
   mastered: "Mastered", tested_out: "Tested out" };
+const INTENTION_NAMES = { class: "a class or exam", project: "a project", work: "work or a job", curiosity: "curiosity", other: "something else" };
 const EXAMPLE_NAMES = { worked_first: "worked examples first", after_theory: "examples after the theory", none: "no worked examples" };
 const courses = { waiting: new Set(), pollTimer: null };
 const coursesAddress = () => `?${new URLSearchParams({ token: TOKEN, courses: "1" })}`;
@@ -1488,6 +1490,12 @@ function courseHistory(course) {
       el("span", { class: "muted", text: `${shortDate(entry.at)} ` }), document.createTextNode(entry.change)))));
 }
 
+function courseAims(intake) {
+  const why = [INTENTION_NAMES[intake.intention], intake.intention_details].filter(Boolean).join(": ");
+  const rows = [why && `For ${why}`, intake.end_goal && `By the end: ${intake.end_goal}`].filter(Boolean);
+  return rows.length ? el("div", { class: "course-aims muted", "data-aims": "true" }, ...rows.map((text) => el("div", { text }))) : null;
+}
+
 function renderCourse(view) {
   const { course } = view;
   document.title = `${course.title} (course)`;
@@ -1504,6 +1512,7 @@ function renderCourse(view) {
       el("span", { class: "chip experimental", text: "Experimental" }),
       el("span", { class: "chip", "data-phase": course.phase, text: PHASE_NAMES[course.phase] }),
       el("span", { class: "muted", text: course.intake.goal })),
+    courseAims(course.intake),
     PHASE_NOTES[course.phase] && el("p", { class: "note-box", text: PHASE_NOTES[course.phase] }),
     ...view.requests.map(requestRow),
     coursePlacement(course),

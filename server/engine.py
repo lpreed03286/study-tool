@@ -21,7 +21,7 @@ from typing import Callable
 
 import prompts
 import sources
-from courses import CourseError, Courses
+from courses import INTENTIONS, CourseError, Courses
 from library import Library, LibraryError, class_label
 from storage import read_json, write_json
 
@@ -391,9 +391,12 @@ class Engine:
     @staticmethod
     def _clean_course_form(form: dict) -> dict:
         clean = {key: str(form.get(key) or "").strip()
-                 for key in ("goal", "background", "time_per_week", "materials", "library_class")}
+                 for key in ("goal", "intention", "intention_details", "end_goal", "background", "time_per_week",
+                             "materials", "library_class")}
         if not clean["goal"]:
             raise UserError("Say what you want to learn. One sentence is enough.")
+        if clean["intention"] and clean["intention"] not in INTENTIONS:
+            raise UserError("Choose what you're learning it for from the list.")
         return {**clean, "kind": "course"}
 
     @staticmethod
@@ -528,6 +531,8 @@ class Engine:
         presentation = plan.get("presentation") or {}
         return {**worksheet, "course_context": {
             "title": course["title"], "goal": course["intake"]["goal"], "background": course["intake"]["background"],
+            "intention": INTENTIONS.get(course["intake"].get("intention"), ""),
+            "intention_details": course["intake"].get("intention_details", ""), "end_goal": course["intake"].get("end_goal", ""),
             "style": presentation.get("style", ""), "notes": presentation.get("notes", "")}}
 
     def _course_label(self, link: dict) -> dict:
