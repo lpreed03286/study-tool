@@ -30,6 +30,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from courses import CourseError  # noqa: E402
 from engine import Engine, UserError  # noqa: E402
 from library import MAX_FILE_BYTES, MAX_IMPORT_BYTES, LibraryError  # noqa: E402
 from storage import read_json, write_json  # noqa: E402
@@ -166,6 +167,20 @@ class App:
             return {"pending": engine.library.pending([engine.library.get(i) for i in ids] if ids else None)}
         if name == "library_save_index":
             return engine.save_library_index(args)
+        if name == "course_create":
+            return engine.course_create(args)
+        if name == "course_save_research":
+            return engine.course_save_research(args)
+        if name == "course_save_plan":
+            return engine.course_save_plan(args)
+        if name == "course_save_syllabus":
+            return engine.course_save_syllabus(args)
+        if name == "course_overview":
+            return engine.course_overview(args.get("course") or "")
+        if name == "course_section":
+            return engine.course_section(args.get("course") or "", args.get("section") or "")
+        if name == "course_placement":
+            return engine.course_placement(args.get("course") or "", args.get("sections") or [])
         if name == "status":
             return self.status()
         raise UserError(f"Unknown tool {name}")
@@ -417,7 +432,7 @@ def make_handler(app: App):
                     return self._json(app.engine.ask_status(query["id"]))
                 if url.path == "/api/methods":
                     return self._json(app.engine.list_methods())
-            except (UserError, LibraryError) as refusal:
+            except (UserError, LibraryError, CourseError) as refusal:
                 return self._json({"error": str(refusal)}, HTTPStatus.BAD_REQUEST)
             except Exception:
                 traceback.print_exc(file=sys.stderr)
@@ -460,7 +475,7 @@ def make_handler(app: App):
                     self._json({"ok": True})
                     threading.Thread(target=shutdown, args=(app,), daemon=True).start()
                     return None
-            except (UserError, LibraryError) as refusal:
+            except (UserError, LibraryError, CourseError) as refusal:
                 return self._json({"error": str(refusal)}, HTTPStatus.BAD_REQUEST)
             except Exception:
                 traceback.print_exc(file=sys.stderr)

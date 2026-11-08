@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 declare const setTimeout: (done: (value: unknown) => void, ms: number) => void
 
-const TOOLS = ['check_coverage', 'add_method', 'record_coverage', 'study_plan', 'error_log', 'create_set', 'create_doc', 'library_overview', 'library_search', 'library_read', 'library_pending', 'library_save_index', 'open_worksheet']
+const TOOLS = ['check_coverage', 'add_method', 'record_coverage', 'study_plan', 'error_log', 'create_set', 'create_doc', 'course_overview', 'course_create', 'course_save_research', 'course_save_plan', 'course_save_syllabus', 'course_section', 'course_placement', 'library_overview', 'library_search', 'library_read', 'library_pending', 'library_save_index', 'open_worksheet']
 
 test('a session registers /worksheet and every tool, and starts no server by itself', async ($, on) => {
   const commands: string[] = []

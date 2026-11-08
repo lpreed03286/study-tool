@@ -259,3 +259,152 @@ def test_the_course_is_complete_when_every_section_is_done(courses):
     course_id = started(courses, [{"id": "c1", "title": "A", "sections": [section("only")]}])
     courses.record_check(course_id, "only", "s", items(1, 1), 1.0)
     assert courses.get(course_id)["phase"] == "complete"
+
+
+# --- Through the engine: tools and links to documents and sets ---------------------
+
+import threading  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+
+from engine import Engine  # noqa: E402
+from server import App, Worker  # noqa: E402
+
+PAGE = ("<html><body><p>Kepler's laws describe how planets move around the Sun in ellipses.</p>"
+        + "<p>Orbital mechanics applies these laws to satellites, probes and spacecraft of every size.</p>" * 20
+        + "</body></html>")
+QUOTE = "Kepler's laws describe how planets move around the Sun"
+GUIDE = [{"type": "heading", "text": "Kepler"},
+         {"type": "definition", "term": "Orbit", "meaning": "The path a body takes around another.", "own_words": True}]
+CONCEPT = {"statement": "\\text{Concept check}", "method": "concept_questions", "section": "c1-s1", "topic": "Kepler",
+           "questions": [{"question": "What shape is an orbit?", "answer": "An ellipse.", "nudge": "Think conics.",
+                          "method_hint": "Kepler's first law.", "own_words": True}]}
+
+
+@pytest.fixture(scope="module")
+def site():
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = PAGE.encode()
+            self.send_response(200 if self.path == "/kepler" else 404)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    running = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=running.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{running.server_port}"
+    running.shutdown()
+
+
+@pytest.fixture(scope="module")
+def workers():
+    pool = {"grade": Worker("grading"), "build": Worker("verification")}
+    yield pool
+    for worker in pool.values():
+        worker.stop()
+
+
+@pytest.fixture
+def engine(tmp_path, workers):
+    return Engine(tmp_path, lambda which, op, args, timeout: workers[which].call(op, args, timeout),
+                  lambda event: None, allow_local_sources=True)
+
+
+def through_tools(engine, site):
+    course = engine.course_create({"goal": "Orbital mechanics for a satellite project", "title": "Orbital Mechanics"})
+    assert course["phase"] == "research" and course["course"] == "orbital-mechanics"
+    saved = engine.course_save_research({"course": course["course"], "summary": "Start with Kepler.",
+                                         "sources": [{"title": "Kepler", "url": f"{site}/kepler", "quote": QUOTE}]})
+    assert saved["saved"] and saved["sources_confirmed"] == 1 and saved["phase"] == "planning"
+    assert engine.course_save_plan({"course": course["course"], "plan": PLAN})["phase"] == "syllabus"
+    made = engine.course_save_syllabus({"course": course["course"], "chapters": SYLLABUS})
+    assert made["sections"][0] == {"id": "c1-s1", "status": "available"}
+    return course["course"]
+
+
+def test_the_tools_take_a_course_from_intake_to_active(engine, site):
+    course_id = through_tools(engine, site)
+    assert engine.course_overview("")["courses"][0]["sections"] == 3
+    assert "c1-s1 [available]" in engine.course_overview(course_id)["overview"]
+    assert engine.course_section(course_id, "c1-s2")["section"]["status"] == "locked"
+
+
+def test_research_needs_real_sources(engine, site):
+    course = engine.course_create({"goal": "Rust"})
+    with pytest.raises(Exception, match="at least one source"):
+        engine.course_save_research({"course": course["course"], "summary": "x", "sources": []})
+    refused = engine.course_save_research({"course": course["course"], "summary": "x",
+                                           "sources": [{"title": "Made up", "url": f"{site}/kepler", "quote": "words that are not there at all"}]})
+    assert refused["saved"] is False and refused["failed"][0]["index"] == 0
+    assert engine.courses.get(course["course"])["phase"] == "research"
+
+
+def test_a_lesson_links_to_an_unlocked_section_only(engine, site):
+    course_id = through_tools(engine, site)
+    lesson = {"kind": "study_guide", "title": "Kepler's laws", "blocks": GUIDE, "course": course_id, "course_role": "lesson"}
+    with pytest.raises(CourseError, match="locked"):
+        engine.create_doc({**lesson, "section": "c1-s2"})
+    assert list((engine.data / "docs").glob("*.json")) == []
+    with pytest.raises(Exception, match="study guide"):
+        engine.create_doc({**lesson, "kind": "equation_sheet", "section": "c1-s1"})
+    made = engine.create_doc({**lesson, "section": "c1-s1"})
+    assert made["created"]
+    section = engine.courses.section(engine.courses.get(course_id), "c1-s1")
+    assert section["lesson_doc"] == made["doc"] and section["status"] == "in_progress"
+    assert engine.load_doc(made["doc"])["course"] == {"id": course_id, "section": "c1-s1", "role": "lesson"}
+    with pytest.raises(CourseError, match="already has a lesson"):
+        engine.create_doc({**lesson, "section": "c1-s1"})
+    again = engine.create_doc({**lesson, "section": "c1-s1", "regenerate": True})
+    assert engine.courses.section(engine.courses.get(course_id), "c1-s1")["lesson_doc"] == again["doc"]
+
+
+def test_a_check_set_links_to_its_section_and_placement_waits_for_its_sections(engine, site):
+    course_id = through_tools(engine, site)
+    made = engine.create_set({"title": "Kepler check", "textbook": {}, "problems": [CONCEPT],
+                              "course": course_id, "section": "c1-s1", "course_role": "check"})
+    assert made["created"]
+    assert engine.courses.section(engine.courses.get(course_id), "c1-s1")["check_set"] == made["set"]
+    assert engine.load_set(made["set"])["course"]["role"] == "check"
+    with pytest.raises(Exception, match="create_doc"):
+        engine.create_set({"title": "x", "textbook": {}, "problems": [CONCEPT], "course": course_id,
+                           "section": "c1-s1", "course_role": "lesson"})
+    with pytest.raises(CourseError, match="course_placement"):
+        engine.create_set({"title": "Placement", "textbook": {}, "problems": [CONCEPT], "course": course_id,
+                           "course_role": "placement"})
+    engine.course_placement(course_id, ["c1-s1"])
+    placed = engine.create_set({"title": "Placement", "textbook": {}, "problems": [CONCEPT], "course": course_id,
+                                "course_role": "placement"})
+    assert engine.courses.get(course_id)["placement"]["set"] == placed["set"]
+
+
+def test_documents_and_sets_without_a_course_are_unchanged(engine):
+    made = engine.create_doc({"kind": "study_guide", "title": "Plain", "blocks": GUIDE})
+    assert sorted(made) == ["blocks_in_own_words", "created", "diagrams", "doc", "examples_not_checked",
+                            "examples_verified", "ok", "plots", "sources_confirmed", "sources_not_auto_checked"]
+    assert "course" not in engine.load_doc(made["doc"])
+    plain = engine.create_set({"title": "Plain set", "textbook": {}, "problems": [CONCEPT]})
+    assert sorted(plain) == ["created", "ok", "problems", "set"] and "course" not in engine.load_set(plain["set"])
+    assert engine.courses.all() == []
+
+
+def test_a_dismissed_request_stops_a_section_showing_as_generating(engine, site):
+    course_id = through_tools(engine, site)
+    engine.courses.set_generating(course_id, "c1-s1", "abc123")
+    engine.dismiss_request("abc123")
+    assert engine.courses.section(engine.courses.get(course_id), "c1-s1")["status"] == "available"
+
+
+def test_the_server_routes_course_tools(tmp_path):
+    app = App(tmp_path, emit_stdout=False)
+    try:
+        made = app.tool("course_create", {"goal": "Control systems"})
+        assert app.tool("course_overview", {"course": made["course"]})["overview"].startswith("# Control systems")
+        with pytest.raises(CourseError, match="isn't a course"):
+            app.tool("course_section", {"course": "Not An Id", "section": "x"})
+    finally:
+        for worker in app.workers.values():
+            worker.stop()

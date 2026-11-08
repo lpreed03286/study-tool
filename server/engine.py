@@ -19,6 +19,7 @@ from typing import Callable
 
 import prompts
 import sources
+from courses import CourseError, Courses
 from library import Library, LibraryError, class_label
 from storage import read_json, write_json
 
@@ -57,6 +58,7 @@ class Engine:
         self.call_worker = call_worker
         self.emit = emit
         self.library = Library(self.data)
+        self.courses = Courses(self.data)
         self.lock = threading.RLock()
         self.asks: dict[str, dict] = {}
         for folder in ("sets", "progress", "repertoire", "docs"):
@@ -138,6 +140,7 @@ class Engine:
         problems = request.get("problems") or []
         if not problems:
             raise UserError("A set needs at least one problem.")
+        link = self._course_link(request, "set")
         uncovered = self.uncovered(book, problems)
         if uncovered:
             raise UserError(
@@ -166,7 +169,11 @@ class Engine:
             "textbook": book, "book_methods": book_methods, "problems": built,
             "weak_spots_used": request.get("weak_spots_used") or [], "difficulty": difficulty,
         }
+        if link:
+            worksheet["course"] = link
         write_json(self._set_path(set_id), worksheet)
+        if link:
+            self.courses.link(link["id"], link["section"], link["role"], set_id)
         if request.get("request_id"):
             self.dismiss_request(request["request_id"])
         return {"ok": True, "created": True, "set": set_id,
@@ -282,6 +289,7 @@ class Engine:
         blocks = request.get("blocks") or []
         if not blocks:
             raise UserError("A document needs at least one block.")
+        link = self._course_link(request, "doc")
         if kind == "study_guide":
             self._require_reference(blocks)
         book = request.get("textbook") or {}
@@ -302,11 +310,16 @@ class Engine:
             return {"ok": False, "created": False, "failed": reply["failed"]}
         doc_id = self._new_id(request.get("title") or kind, self._doc_path)
         built = [{**block, **checked[index]} for index, block in enumerate(reply["blocks"])]
-        write_json(self._doc_path(doc_id), {
+        doc = {
             "id": doc_id, "kind": kind, "title": request.get("title") or "Untitled", "created_at": time.time(),
             "subject": str(request.get("subject") or ""), "textbook": book,
             "source": request.get("source") or "memory", "blocks": built,
-        })
+        }
+        if link:
+            doc["course"] = link
+        write_json(self._doc_path(doc_id), doc)
+        if link:
+            self.courses.link(link["id"], link["section"], link["role"], doc_id)
         if request.get("request_id"):
             self.dismiss_request(request["request_id"])
         made = [b for b in built if b["type"] == "example"]
@@ -426,11 +439,20 @@ class Engine:
 
     def request_failed(self, request_id: str, reason: str) -> None:
         self._update_request(request_id, state="failed", reason=reason)
+        self._clear_course_request(request_id)
 
     def dismiss_request(self, request_id: str) -> dict:
         with self.lock:
             write_json(self._requests_path, [r for r in self._load_requests() if r["id"] != request_id])
+        self._clear_course_request(request_id)
         return self.home_view()
+
+    def _clear_course_request(self, request_id: str) -> None:
+        # Course trouble must never stop the rest of the app.
+        try:
+            self.courses.clear_request(request_id)
+        except Exception:
+            pass
 
     def interrupt_requests(self) -> None:
         """A new server means the session that was working on these has ended."""
@@ -441,6 +463,74 @@ class Engine:
                     request.update(state="failed", reason="The Claude session closed before this finished.")
             if requests:
                 write_json(self._requests_path, requests)
+
+    # --- Courses (experimental) ----------------------------------------------
+
+    def _course_link(self, request: dict, made: str) -> dict | None:
+        """Checked before anything is built, so a refused link builds nothing."""
+        course_id = request.get("course")
+        if not course_id:
+            return None
+        role = request.get("course_role") or ("lesson" if made == "doc" else "check")
+        if made == "doc" and (role != "lesson" or request.get("kind") != "study_guide"):
+            raise UserError("A course document can only be a section's lesson, made as a study guide with course_role \"lesson\".")
+        if made == "set" and role == "lesson":
+            raise UserError("A lesson is a study guide, so make it with create_doc.")
+        section = request.get("section") or None
+        self.courses.check_link(course_id, section, role, bool(request.get("regenerate")))
+        return {"id": course_id, "section": section if role != "placement" else None, "role": role}
+
+    def course_create(self, args: dict) -> dict:
+        course = self.courses.create(args)
+        if args.get("request_id"):
+            self.dismiss_request(args["request_id"])
+        return {"ok": True, "course": course["id"], "title": course["title"], "phase": course["phase"],
+                "next": "Research the topic, then save it with course_save_research. See the make-course skill."}
+
+    def course_save_research(self, args: dict) -> dict:
+        """Research is the course's footing, so every source must check out and there must be at least one."""
+        raw = args.get("sources") or []
+        if not isinstance(raw, list) or not raw:
+            raise UserError("Research needs at least one source you opened in this session.")
+        checker = sources.Checker(self.data, self.allow_local_sources)
+        checker.prefetch([s for s in raw if isinstance(s, dict)])
+        checked, failed = [], []
+        for index, source in enumerate(raw):
+            try:
+                checked.append(checker.check(source))
+            except sources.Refused as reason:
+                failed.append({"index": index, "title": (source or {}).get("title", ""), "reason": str(reason)})
+        if failed:
+            return {"ok": False, "saved": False, "failed": failed}
+        course = self.courses.save_research(args.get("course", ""), args.get("summary", ""), checked)
+        return {"ok": True, "saved": True, "course": course["id"], "phase": course["phase"],
+                "sources_confirmed": sum(s["status"] == sources.CONFIRMED for s in checked),
+                "sources_not_auto_checked": [{"title": s["title"], "why": s["note"]} for s in checked
+                                             if s["status"] != sources.CONFIRMED]}
+
+    def course_save_plan(self, args: dict) -> dict:
+        course = self.courses.save_plan(args.get("course", ""), args.get("plan") or {}, args.get("change", ""))
+        return {"ok": True, "course": course["id"], "phase": course["phase"], "plan": course["plan"]}
+
+    def course_save_syllabus(self, args: dict) -> dict:
+        course = self.courses.save_syllabus(args.get("course", ""), args.get("chapters") or [],
+                                            bool(args.get("partial")), args.get("change", ""))
+        return {"ok": True, "course": course["id"], "phase": course["phase"],
+                "sections": [{"id": s["id"], "status": s["status"]} for s in self.courses.sections(course)]}
+
+    def course_overview(self, course_id: str) -> dict:
+        if not course_id:
+            return {"courses": [self.courses.summary(c) for c in self.courses.all()]}
+        return self.courses.overview(course_id)
+
+    def course_section(self, course_id: str, section_id: str) -> dict:
+        return self.courses.section_view(course_id, section_id)
+
+    def course_placement(self, course_id: str, section_ids: list[str]) -> dict:
+        course = self.courses.choose_placement(course_id, section_ids)
+        return {"ok": True, "course": course["id"], "sections": course["placement"]["sections"],
+                "next": "Build the placement check with create_set, passing course and course_role \"placement\", "
+                        "with each item tagged with its section. See the make-course skill."}
 
     # --- Repertoire coverage -------------------------------------------------
 

@@ -53,6 +53,15 @@ const SOURCES = {
 }
 const OWN_WORDS = { type: 'boolean', description: "True for your own explanation or analogy, which the page labels as having no source" }
 
+// Optional on create_set and create_doc. Without them, both behave exactly as before.
+const COURSE_LINK = {
+  course: { type: 'string', description: 'Experimental courses only: the course id this belongs to. See the make-course skill.' },
+  section: { type: 'string', description: 'The section id, for a lesson, check or practice set' },
+  course_role: { type: 'string', enum: ['lesson', 'check', 'practice', 'placement'], description: 'lesson for create_doc; check, practice or placement for create_set' },
+  regenerate: { type: 'boolean', description: 'Replace a section lesson that already exists. Only when the student asked' },
+}
+const COURSE_ID = { type: 'string', description: 'The course id' }
+
 const TOOLS: ToolDefinition[] = [
   {
     name: 'check_coverage',
@@ -140,6 +149,7 @@ const TOOLS: ToolDefinition[] = [
           description: 'How hard the generated problems are; textbook unless the student asked otherwise. See the make-set skill.',
         },
         request_id: { type: 'string', description: "From the worksheet page's New form, when the request names one" },
+        ...COURSE_LINK,
         weak_spots_used: { type: 'array', items: { type: 'string' } },
         book_methods: {
           type: 'object',
@@ -193,6 +203,7 @@ const TOOLS: ToolDefinition[] = [
         textbook: BOOK,
         source: { type: 'string', enum: ['pdf', 'memory'] },
         request_id: { type: 'string', description: "From the worksheet page's New form, when the request names one" },
+        ...COURSE_LINK,
         book_methods: { type: 'object', description: 'Method id to { notation }, as in create_set' },
         blocks: {
           type: 'array',
@@ -210,6 +221,138 @@ const TOOLS: ToolDefinition[] = [
         },
       },
       required: ['kind', 'title', 'blocks'],
+    },
+  },
+  {
+    name: 'course_overview',
+    description:
+      'Start here for any experimental course step. With course, returns its short overview: goal, plan, syllabus with statuses, and weak spots. Without one, lists the courses. See the make-course skill.',
+    inputSchema: { type: 'object', properties: { course: COURSE_ID } },
+  },
+  {
+    name: 'course_create',
+    description: "Starts an experimental course from the student's intake, in the research phase. A one-sentence goal is enough. See the make-course skill.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        goal: { type: 'string' },
+        background: { type: 'string' },
+        time_per_week: { type: 'string' },
+        materials: { type: 'string' },
+        library_class: { type: 'string' },
+        request_id: { type: 'string', description: "From the worksheet page's New form, when the request names one" },
+      },
+      required: ['goal'],
+    },
+  },
+  {
+    name: 'course_save_research',
+    description: 'Saves the research summary and its sources, each checked like make-doc sources, and moves the course to planning. All or nothing.',
+    inputSchema: {
+      type: 'object',
+      properties: { course: COURSE_ID, summary: { type: 'string' }, sources: SOURCES },
+      required: ['course', 'summary', 'sources'],
+    },
+  },
+  {
+    name: 'course_save_plan',
+    description: 'Saves the plan agreed with the student: presentation, assessment kinds, mastery bar and pacing. Can be called again to change it; each call is recorded in the history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        course: COURSE_ID,
+        change: { type: 'string', description: 'What changed and why, for the history' },
+        plan: {
+          type: 'object',
+          properties: {
+            presentation: {
+              type: 'object',
+              properties: {
+                style: { type: 'string' },
+                examples: { type: 'string', enum: ['worked_first', 'after_theory', 'none'] },
+                figures: { type: 'boolean' },
+                notes: { type: 'string' },
+              },
+            },
+            assessment: {
+              type: 'object',
+              properties: {
+                default_kinds: { type: 'array', items: { type: 'string', enum: ['multiple_choice', 'numeric', 'short_answer', 'math'] } },
+                per_section_override: { type: 'boolean' },
+              },
+            },
+            mastery: {
+              type: 'object',
+              properties: {
+                threshold: { type: 'number', description: 'Fraction of check items right to master a section, e.g. 0.8' },
+                max_hints_ratio: { type: 'number', description: 'Most of the items that may use a nudge or method hint, e.g. 0.5' },
+                require_all_prereqs: { type: 'boolean' },
+              },
+            },
+            pacing: { type: 'string' },
+          },
+        },
+      },
+      required: ['course', 'plan'],
+    },
+  },
+  {
+    name: 'course_save_syllabus',
+    description:
+      'Saves chapters and sections. Section ids are permanent: keep an id to keep its progress, and never reuse a removed one. Prereqs are section ids, and loops are refused. With partial, only the chapters given are replaced.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        course: COURSE_ID,
+        partial: { type: 'boolean' },
+        change: { type: 'string', description: 'What changed, for the history' },
+        chapters: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'e.g. c1' },
+              title: { type: 'string' },
+              sections: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', description: 'e.g. c1-s1' },
+                    title: { type: 'string' },
+                    objectives: { type: 'array', items: { type: 'string' } },
+                    prereqs: { type: 'array', items: { type: 'string' } },
+                    assessment_kinds: { type: 'array', items: { type: 'string', enum: ['multiple_choice', 'numeric', 'short_answer', 'math'] } },
+                    subsections: {
+                      type: 'array',
+                      items: { type: 'object', properties: { title: { type: 'string' }, objectives: { type: 'array', items: { type: 'string' } } } },
+                    },
+                  },
+                  required: ['id', 'title', 'objectives'],
+                },
+              },
+            },
+            required: ['id', 'title', 'sections'],
+          },
+        },
+      },
+      required: ['course', 'chapters'],
+    },
+  },
+  {
+    name: 'course_section',
+    description: "One section's record, its assessment kinds, and how the student did on its prerequisites. Read it before writing that section's lesson or check.",
+    inputSchema: { type: 'object', properties: { course: COURSE_ID, section: { type: 'string' } }, required: ['course', 'section'] },
+  },
+  {
+    name: 'course_placement',
+    description:
+      'Chooses early sections for a placement check. Every prerequisite of a chosen section must be chosen too. Then build the check with create_set and course_role placement; sections passed are marked tested out.',
+    inputSchema: {
+      type: 'object',
+      properties: { course: COURSE_ID, sections: { type: 'array', items: { type: 'string' } } },
+      required: ['course', 'sections'],
     },
   },
   {
@@ -456,7 +599,7 @@ export const register: Register = on => {
       return {
         text: opened,
         context: [
-          'To make a new worksheet from a textbook and sections, follow the make-set skill. For a study guide or equation sheet, follow the make-doc skill. To index library files, follow the make-index skill. Never commit or push with git for the student.',
+          'To make a new worksheet from a textbook and sections, follow the make-set skill. For a study guide or equation sheet, follow the make-doc skill. To index library files, follow the make-index skill. For an experimental course, follow the make-course skill. Never commit or push with git for the student.',
         ],
       }
     } catch (failure) {
