@@ -1678,6 +1678,7 @@ def test_the_new_form_starts_a_course_and_it_shows_on_the_courses_page(server, h
     row.wait_for(timeout=8000)
     assert "Experimental" in row.inner_text() and "Researching" in row.inner_text()
     assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0
+    assert f"token={server.token}" in home.locator("#home-link").get_attribute("href")
     home.screenshot(path=SHOTS / f"60-courses-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
 
 
@@ -1692,6 +1693,8 @@ def test_the_course_page_shows_statuses_and_generate_sends_a_request(server, hom
     assert "Locked" in locked.inner_text() and "Needs: Orbit shapes" in locked.inner_text()
     assert locked.locator("[data-generate]").count() == 0
     assert "Concise, worked examples first" in home.locator(".course-plan").inner_text()
+    for link in ("#home-link", ".back-link"):
+        assert f"token={server.token}" in home.locator(link).get_attribute("href"), link
     home.screenshot(path=SHOTS / f"61-course-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
 
     home.locator("[data-generate='c1-s1']").click()

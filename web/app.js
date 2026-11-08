@@ -1314,6 +1314,8 @@ async function submitNewForm(event) {
 
 function setupHome() {
   setupTheme();
+  // The course pages share this setup, and they show the link back home.
+  $("home-link").href = homeAddress();
   try { $("home-sort").value = localStorage.getItem("worksheet-sort") || "recent"; } catch { /* Just the default order. */ }
   $("home-sort").addEventListener("change", () => {
     try { localStorage.setItem("worksheet-sort", $("home-sort").value); } catch { /* It just won't be remembered. */ }
