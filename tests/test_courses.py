@@ -619,3 +619,17 @@ def test_course_requests_name_the_course_section_and_request():
     assert "make-course skill" in started_text and 'request_id "r1"' in started_text and "3 hours" in started_text
     step_text = prompts.new_set({"kind": "next_section", "course": "rust", "section": "c1-s2"}, "r2")
     assert "course rust, section c1-s2" in step_text and "step 5" in step_text and 'request_id "r2"' in step_text
+
+
+def test_the_make_course_skill_example_builds_and_verifies():
+    import re
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent.parent / "skills/make-course/SKILL.md").read_text()
+    example = re.search(r"```json\n(.*?)```", text, re.DOTALL).group(1).replace("[...]", "[]")
+    problem = json.loads(example)
+    plan = build_course_items(problem, {})
+    assert [s["check"]["kind"] for s in plan["steps"]] == ["multiple_choice", "numeric", "discussion"]
+    assert "exact" in verify_plan(plan)
+    for name in ("course_overview", "course_create", "course_save_research", "course_save_plan", "course_save_syllabus",
+                 "course_section", "course_placement"):
+        assert name in text, name
