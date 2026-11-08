@@ -202,6 +202,10 @@ class App:
             return engine.delete_library_file(body.get("id", ""))
         if action == "request_set":
             return engine.request_set(body.get("form") or {})
+        if action == "course_request":
+            return engine.course_request(body)
+        if action == "course_delete":
+            return engine.course_delete(body.get("id", ""), bool(body.get("remove_items")))
         if action == "retry_request":
             return engine.retry_request(body.get("id", ""))
         if action == "dismiss_request":
@@ -430,6 +434,10 @@ def make_handler(app: App):
                     return self._json(app.engine.view(query["set"], query.get("problem")))
                 if url.path == "/api/ask":
                     return self._json(app.engine.ask_status(query["id"]))
+                if url.path == "/api/courses":
+                    return self._json(app.engine.courses_view())
+                if url.path == "/api/course":
+                    return self._json(app.engine.course_view(query["id"]))
                 if url.path == "/api/methods":
                     return self._json(app.engine.list_methods())
             except (UserError, LibraryError, CourseError) as refusal:

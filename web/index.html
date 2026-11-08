@@ -13,7 +13,7 @@
       try { theme = localStorage.getItem("worksheet-theme") || "dark"; } catch (e) {}
       document.documentElement.dataset.theme = theme;
       var query = new URLSearchParams(location.search);
-      document.documentElement.dataset.page = query.has("set") ? "worksheet" : query.has("doc") ? "doc" : query.has("library") ? "library" : query.has("help") ? "help" : "home";
+      document.documentElement.dataset.page = query.has("set") ? "worksheet" : query.has("doc") ? "doc" : query.has("library") ? "library" : query.has("help") ? "help" : query.has("course") ? "course" : query.has("courses") ? "courses" : "home";
     })();
     // First, so a failure in anything below is shown on the page, not silent.
     (function () {
@@ -75,6 +75,7 @@
       </label>
       <a id="help-link" class="button-link" href="?">Help</a>
       <a id="library-link" class="button-link" href="?">Library</a>
+      <a id="courses-link" class="button-link" href="?">Courses</a>
       <button id="new-set" type="button" class="primary">New</button>
       <button id="library-export" type="button">Export</button>
       <button id="library-import" type="button">Import</button>
@@ -132,15 +133,25 @@
             <option value="worksheet">Worksheet</option>
             <option value="study_guide">Study guide</option>
             <option value="equation_sheet">Equation sheet</option>
+            <option value="course">Course (experimental)</option>
           </select>
         </label>
-        <label>Class or subject (optional) <input id="new-subject" type="text"></label>
+        <label class="not-course">Class or subject (optional) <input id="new-subject" type="text"></label>
       </div>
-      <div class="form-pair book-pair">
+      <div class="only-course">
+        <p class="muted">Courses are experimental. Claude researches the topic, agrees a plan and syllabus with you in the terminal, then makes one section at a time.</p>
+        <label>What do you want to learn, and why? <textarea id="new-goal" rows="2" placeholder="Orbital mechanics, for a CubeSat project at school"></textarea></label>
+        <label>What you already know (optional) <input id="new-background" type="text" placeholder="Calculus and intro physics"></label>
+        <div class="form-pair">
+          <label>Time each week (optional) <input id="new-time" type="text" placeholder="3 hours"></label>
+          <label>Material you have (optional) <input id="new-materials" type="text" placeholder="Links, books or notes"></label>
+        </div>
+      </div>
+      <div class="form-pair book-pair not-course">
         <label>Textbook <input id="new-book" type="text"></label>
         <label>Edition <input id="new-edition" type="text"></label>
       </div>
-      <label>Sections or topics <input id="new-topics" type="text" placeholder="5.1-5.3, or power series solutions"></label>
+      <label class="not-course">Sections or topics <input id="new-topics" type="text" placeholder="5.1-5.3, or power series solutions"></label>
       <div class="form-pair only-worksheet">
         <label>Number of problems <input id="new-count" type="number" min="1" max="30" step="1" value="8"></label>
         <label>Difficulty
@@ -159,9 +170,9 @@
         <label class="check"><input id="new-examples" type="checkbox" checked> Include example problems</label>
         <label class="check"><input id="new-figures" type="checkbox" checked> Include plots and diagrams</label>
       </div>
-      <label>What to focus on (optional) <textarea id="new-focus" rows="2"></textarea></label>
+      <label class="not-course">What to focus on (optional) <textarea id="new-focus" rows="2"></textarea></label>
       <label class="only-worksheet">Your own problems, kept word for word (optional) <textarea id="new-typed" rows="2"></textarea></label>
-      <label>Book pages: PDF or photo file paths, one per line (optional) <textarea id="new-pages" rows="2" placeholder="~/Documents/kreyszig-ch5.pdf"></textarea></label>
+      <label class="not-course">Book pages: PDF or photo file paths, one per line (optional) <textarea id="new-pages" rows="2" placeholder="~/Documents/kreyszig-ch5.pdf"></textarea></label>
       <p id="new-error" role="alert" hidden></p>
       <menu>
         <button id="new-cancel" type="button">Cancel</button>

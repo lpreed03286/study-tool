@@ -285,12 +285,14 @@ table.score td:last-child, table.score th:last-child { text-align: right; }
 .result-row.wrong .mark { color: var(--bad); }
 
 /* The home page shares the header. <html data-page> is set in index.html. */
-:root[data-page="help"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #library-add, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
+:root[data-page="help"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #courses-link, #library-add, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
 :root:not([data-page="library"]) :is(#library-export, #library-import) { display: none !important; }
 :root[data-page="home"] :is(#home-link, #doc-print, #library-add, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
-:root[data-page="doc"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #library-add, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
-:root[data-page="library"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
-:root[data-page="worksheet"] :is(#home-title, #home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #library-add, #doc-print) { display: none !important; }
+:root[data-page="doc"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #courses-link, #library-add, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
+:root[data-page="library"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #courses-link, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
+:root[data-page="courses"] :is(#home-sort-label, #home-filter-label, #help-link, #courses-link, #library-add, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
+:root[data-page="course"] :is(#home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #courses-link, #library-add, #doc-print, #set-picker, #book, #timer, #exam-toggle-label, #tabs, #fade-row, #tools),
+:root[data-page="worksheet"] :is(#home-title, #home-sort-label, #home-filter-label, #new-set, #help-link, #library-link, #courses-link, #library-add, #doc-print) { display: none !important; }
 .button-link { font-size: 15px; color: var(--ink); text-decoration: none; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
 .button-link:hover { border-color: var(--accent); }
 :root:not([data-page="worksheet"]) #top { padding-bottom: 10px; }
@@ -533,3 +535,32 @@ textarea { width: 100%; min-height: 110px; }
 .doc-print-title { display: none; font-size: 22px; margin: 0 0 6px; }
 
 [hidden] { display: none !important; }
+
+/* Courses (experimental) */
+:root:is([data-page="course"], [data-page="courses"]) main { max-width: 960px; }
+.chip.experimental { background: var(--warn-bg); color: var(--warn); }
+.chip.status-available, .chip.status-generating, .chip.status-in_progress { background: var(--soft); color: var(--accent); }
+.chip.status-mastered, .chip.status-tested_out { background: var(--good-bg); color: var(--good); }
+.back-link { display: inline-block; margin-bottom: 10px; color: var(--accent); font-size: 14px; }
+.course-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.course-head .chip { margin-left: 0; }
+.course-syllabus-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.course-chapter h3 { margin: 18px 0 8px; font-size: 16px; }
+.course-section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+.course-section[data-status="locked"] { opacity: 0.75; }
+.course-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.course-section-head .name { font-weight: 600; overflow-wrap: anywhere; }
+.course-section .objectives { margin: 6px 0; padding-left: 20px; font-size: 14px; color: var(--muted); }
+.course-section .actions { margin-top: 8px; }
+.course-links { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.course-links a { color: var(--accent); }
+.course-plan dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 10px; }
+.course-plan dt { color: var(--muted); }
+.course-plan dd { margin: 0; overflow-wrap: anywhere; }
+.course-history { margin: 16px 0; }
+.course-history ul { padding-left: 20px; font-size: 14px; }
+.course-danger { margin-top: 18px; }
+button.danger { color: var(--bad); border-color: var(--bad); }
+.numeric-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.numeric-input { width: min(240px, 100%); font: inherit; padding: 6px 8px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.numeric-row .unit { color: var(--muted); }

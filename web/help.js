@@ -284,6 +284,26 @@ const HELP_GROUPS = [
     ],
   },
   {
+    title: "Courses (experimental)",
+    sections: [
+      {
+        id: "courses", title: "Courses (experimental)",
+        what: "A course teaches a topic you're new to, one section at a time. Each section has a lesson and a check, and it opens once you've mastered the sections it builds on. [[Courses]] on the home page lists yours. Courses are experimental, so expect rough edges.",
+        example: "Press [[New]], choose Course (experimental), and write: Orbital mechanics, for a CubeSat project at school. Claude researches it, then agrees a teaching style, the kinds of checks, how much counts as mastered, and a syllabus with you in the terminal.",
+        how: [
+          "[[Generate]] on an available section makes its lesson and check. Only one section is made at a time.",
+          "A check counts once every item is answered or skipped. An item counts if it's right without opening the answer hint, and a few nudges or method hints are fine, up to the limit in your plan.",
+          "Multiple choice and numeric items are graded exactly by the program. Short answers are judged by Claude, and the page says so.",
+          "For a numeric item, type only the number. The unit you should use is shown beside the box, and decimals are fine.",
+          "If you don't pass, press [[Retry check]] for a new check aimed at what you missed.",
+          "A placement quiz can mark early sections as tested out. It only counts when you take it in exam mode.",
+          "[[Edit syllabus]] and [[Change plan]] ask Claude in your terminal. Sections keep their progress when the syllabus changes.",
+          "[[Delete course]] removes the course but keeps its lessons and checks in your list.",
+        ],
+      },
+    ],
+  },
+  {
     title: "Good to know",
     sections: [
       {

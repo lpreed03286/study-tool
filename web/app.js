@@ -10,6 +10,8 @@ if (window.mathVirtualKeyboard) window.mathVirtualKeyboard.container = null;
 const DOC_ID = params.get("doc");
 const LIBRARY_PAGE = params.has("library");
 const HELP_PAGE = params.has("help");
+const COURSE_ID = params.get("course");
+const COURSES_PAGE = params.has("courses");
 const state = { view: null, setId: params.get("set") || null, focused: null, timerHandle: null, draftTimers: new Map() };
 
 const $ = (id) => document.getElementById(id);
@@ -268,7 +270,8 @@ function renderMain(view) {
     const remaining = problem.total - problem.steps.length;
     if (remaining > 0) parts.push(el("p", { class: "remaining", text: `${remaining} more step${remaining === 1 ? "" : "s"} after this` }));
     if (problem.complete) parts.push(solutionCard(problem));
-    parts.push(addProblemCard());
+    // Adding a typed ODE problem only makes sense for a worksheet, not a course check.
+    if (!view.set.course) parts.push(addProblemCard());
   }
   main.replaceChildren(...parts);
 }
@@ -278,6 +281,8 @@ function problemCard(problem, inExam) {
   const statement = problem.statement + (conditions ? `,\\quad ${conditions}` : "");
   const card = el("section", { class: "problem-card" },
     el("div", { class: "statement", html: renderTex(statement, true) }));
+  const course = state.view && state.view.set.course;
+  if (course) return courseProblemCard(card, problem, course, inExam);
   const facts = [problem.topic, problem.section && `Section ${problem.section}`].filter(Boolean).join(" · ");
   if (problem.context) card.append(el("p", { class: "context", html: richText(problem.context) }));
   if (facts || problem.method) {
@@ -287,6 +292,25 @@ function problemCard(problem, inExam) {
     card.append(meta);
   }
   if (!inExam && problem.book && problem.method !== CONCEPT_METHOD) card.append(bookPanel(problem));
+  if (!inExam && !problem.skipped && !problem.unverified) {
+    const skip = el("button", { type: "button", class: "skip-problem", text: "Skip this problem", "data-action": "skip-problem" });
+    skip.addEventListener("click", () => run({ action: "skip_problem" }, skip));
+    card.append(skip);
+  }
+  return card;
+}
+
+// A course set says which course and section it's for, instead of a textbook.
+function courseProblemCard(card, problem, course, inExam) {
+  const where = course.role === "placement" ? "Placement quiz" : course.section_title || course.section;
+  const meta = el("div", { class: "meta" },
+    el("a", { href: courseAddress(course.id), "data-course-link": course.id, text: course.title || "Course" }),
+    document.createTextNode(where ? ` · ${where}` : ""),
+    el("span", { class: "chip experimental", text: "Experimental course" }));
+  card.append(meta);
+  if (course.role === "placement" && !inExam) {
+    card.append(el("p", { class: "muted", text: "Placement only counts in Exam mode, so turn on Exam mode to take it." }));
+  }
   if (!inExam && !problem.skipped && !problem.unverified) {
     const skip = el("button", { type: "button", class: "skip-problem", text: "Skip this problem", "data-action": "skip-problem" });
     skip.addEventListener("click", () => run({ action: "skip_problem" }, skip));
@@ -361,7 +385,9 @@ function stepTitle(step, word) {
 
 function correctCard(step) {
   const card = el("article", { class: "step correct" }, stepTitle(step, "Correct"));
-  if (step.input !== "discussion") card.append(el("div", { class: "locked", html: renderTex(step.draft || step.readback, true) }));
+  if (step.input === "multiple_choice" || step.input === "numeric") {
+    card.append(el("div", { class: "locked course-answer", html: richText(step.readback || step.draft) }));
+  } else if (step.input !== "discussion") card.append(el("div", { class: "locked", html: renderTex(step.draft || step.readback, true) }));
   card.append(...figureList(step));
   const chips = el("div", { class: "meta" });
   if (step.hint_level) chips.append(el("span", { class: "chip", text: `hints used: level ${step.hint_level}` }));
@@ -423,6 +449,10 @@ function saveVisibleDrafts() {
     clearTimeout(state.draftTimers.get(`discussion-${box.dataset.examDiscussion}`));
     saves.push(act({ action: "exam_own", step: box.dataset.examDiscussion, work: box.value, result: "" }).catch(() => {}));
   }
+  for (const box of document.querySelectorAll("input[data-numeric]")) {
+    clearTimeout(state.draftTimers.get(box.dataset.numeric));
+    saves.push(act({ action: "draft", step: box.dataset.numeric, latex: box.value }).catch(() => {}));
+  }
   for (const field of document.querySelectorAll("math-field[data-step]")) {
     if ((field.dataset.open === "true" || field.dataset.exam === "true") && field.value) {
       clearTimeout(state.draftTimers.get(field.dataset.step));
@@ -441,6 +471,74 @@ function choiceInput(step, name, onPick) {
     group.append(el("label", { class: "choice" }, input, document.createTextNode(option.replace(/^\\text\{|\}$/g, ""))));
   }
   return group;
+}
+
+// Course items: the server grades option indices, so options can hold math.
+function pickedOptions(draft) {
+  const match = /choices:([\d,]*)/.exec(draft || "");
+  return match ? match[1].split(",").filter(Boolean).map(Number) : [];
+}
+
+function optionsInput(step, name, onChange) {
+  const group = el("fieldset", { class: "choices", "data-choices": step.id });
+  group.append(el("legend", { class: "muted", text: step.multi ? "Choose all that apply" : "Choose one" }));
+  const chosen = new Set(pickedOptions(step.draft));
+  step.options.forEach((option, index) => {
+    const input = el("input", { type: step.multi ? "checkbox" : "radio", name, value: String(index), checked: chosen.has(index) });
+    input.addEventListener("change", () => {
+      const picked = [...group.querySelectorAll("input")].filter((box) => box.checked).map((box) => box.value);
+      onChange(picked.length ? `choices:${picked.join(",")}` : "");
+    });
+    group.append(el("label", { class: "choice" }, input, el("span", { html: richText(option) })));
+  });
+  return group;
+}
+
+function numericInput(step, onChange) {
+  const input = el("input", { type: "text", inputmode: "decimal", class: "numeric-input", "data-numeric": step.id,
+    "aria-label": step.unit ? `Answer in ${step.unit}` : "Answer", autocomplete: "off" });
+  input.value = step.draft || "";
+  input.addEventListener("input", () => onChange(input.value));
+  return { input, row: el("div", { class: "numeric-row" }, input, step.unit && el("span", { class: "unit", text: step.unit })) };
+}
+
+function multipleChoiceCard(step) {
+  const card = el("article", { class: "step open", "data-open-step": step.id }, stepTitle(step));
+  card.append(el("p", { class: "prompt", html: richText(step.prompt) }));
+  let picked = step.draft;
+  card.append(optionsInput(step, `choice-${step.id}`, (value) => { picked = value; queueDraft(step.id, value); }));
+  const submit = el("button", { class: "primary", text: "Submit", "data-action": "submit" });
+  submit.addEventListener("click", () => {
+    if (!picked) return toast(step.multi ? "Choose at least one first." : "Choose one first.");
+    run({ action: "submit", step: step.id, latex: picked }, submit);
+    return null;
+  });
+  card.append(el("div", { class: "actions" }, submit, hintButton(step), skipButton(step), explainButton(step)));
+  const feedback = feedbackBox(step);
+  if (feedback) card.append(feedback);
+  card.append(...explainParts(step), ...hintBoxes(step));
+  return card;
+}
+
+function numericCard(step) {
+  const card = el("article", { class: "step open", "data-open-step": step.id }, stepTitle(step));
+  card.append(el("p", { class: "prompt", html: richText(step.prompt) }));
+  const { input, row } = numericInput(step, (value) => queueDraft(step.id, value));
+  card.append(row);
+  const submit = el("button", { class: "primary", text: "Submit", "data-action": "submit" });
+  const send = () => (input.value.trim() ? run({ action: "submit", step: step.id, latex: input.value }, submit) : toast("Enter a number first."));
+  submit.addEventListener("click", send);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      send();
+    }
+  });
+  card.append(el("div", { class: "actions" }, submit, hintButton(step), skipButton(step), explainButton(step)));
+  const feedback = feedbackBox(step);
+  if (feedback) card.append(feedback);
+  card.append(...explainParts(step), ...hintBoxes(step));
+  return card;
 }
 
 function hintBoxes(step) {
@@ -531,6 +629,8 @@ function discussionCard(step) {
 
 function openCard(step, problem) {
   if (step.input === "choice") return choiceCard(step);
+  if (step.input === "multiple_choice") return multipleChoiceCard(step);
+  if (step.input === "numeric") return numericCard(step);
   if (step.input === "discussion") return discussionCard(step);
   const card = el("article", { class: "step open", "data-open-step": step.id }, stepTitle(step));
   card.append(el("p", { class: "prompt", html: richText(step.prompt) }));
@@ -603,6 +703,18 @@ function examCard(step, problem) {
     card.append(choiceInput(step, `exam-${state.view.active}-${step.id}`, (option) => {
       act({ action: "draft", step: step.id, latex: option }).catch(() => {});
     }));
+    return card;
+  }
+  if (step.input === "multiple_choice") {
+    card.append(optionsInput(step, `exam-${state.view.active}-${step.id}`, (value) => {
+      act({ action: "draft", step: step.id, latex: value }).catch(() => {});
+    }));
+    return card;
+  }
+  if (step.input === "numeric") {
+    const { input, row } = numericInput(step, (value) => queueDraft(step.id, value));
+    input.dataset.exam = "true";
+    card.append(row);
     return card;
   }
   const { field, preview } = mathField(step, step.draft, (latex) => queueDraft(step.id, latex));
@@ -1047,6 +1159,9 @@ const SORTS = {
   progress: (a, b) => (a.problems ? a.done / a.problems : 1) - (b.problems ? b.done / b.problems : 1),
 };
 const KIND_NAMES = { study_guide: "Study guide", equation_sheet: "Equation sheet" };
+const COURSE_ASK_NAMES = { next_section: "Making section", retry_check: "Retry check for section",
+  edit_syllabus: "Editing the syllabus", change_plan: "Changing the plan" };
+const isCourseRequest = (request) => request.form.kind === "course" || Boolean(COURSE_ASK_NAMES[request.form.kind]);
 const home = { library: null, waiting: new Set(), pollTimer: null };
 
 const homeAddress = () => `?${new URLSearchParams({ token: TOKEN })}`;
@@ -1084,12 +1199,15 @@ function docRow(doc) {
 function requestRow(request) {
   const { form } = request;
   const stopped = request.state === "failed";
-  const name = [form.topics || "Your own problems", bookName({ name: form.book, edition: form.edition })].filter(Boolean).join(" \u00b7 ");
+  const name = form.kind === "course" ? form.goal
+    : COURSE_ASK_NAMES[form.kind] ? [COURSE_ASK_NAMES[form.kind], form.section].filter(Boolean).join(" ")
+      : [form.topics || "Your own problems", bookName({ name: form.book, edition: form.edition })].filter(Boolean).join(" \u00b7 ");
   const message = stopped ? `This didn't finish: ${request.reason}` : "Claude is making this. If it has a question, it'll ask in your terminal.";
   return el("div", { class: `set-row pending${stopped ? " stopped" : ""}`, "data-request": request.id },
     el("div", { class: "info" },
       el("span", { class: "name", text: name }),
       KIND_NAMES[form.kind] && el("span", { class: "chip", text: KIND_NAMES[form.kind] }),
+      form.kind === "course" && el("span", { class: "chip experimental", text: "Course, experimental" }),
       !KIND_NAMES[form.kind] && DIFFICULTY_NAMES[form.difficulty] && el("span", { class: "chip", text: DIFFICULTY_NAMES[form.difficulty] }),
       el("div", { class: "muted", text: message })),
     el("div", { class: "actions" },
@@ -1099,7 +1217,7 @@ function requestRow(request) {
 
 function renderHome(library) {
   home.library = library;
-  const waiting = new Set(library.requests.filter((r) => r.state === "waiting" && r.form.kind !== "index").map((r) => r.id));
+  const waiting = new Set(library.requests.filter((r) => r.state === "waiting" && r.form.kind !== "index" && !isCourseRequest(r)).map((r) => r.id));
   if ([...home.waiting].some((id) => !waiting.has(id))) toast("It's ready, and it's in your list now.");
   home.waiting = waiting;
 
@@ -1107,7 +1225,7 @@ function renderHome(library) {
   const items = [...library.sets, ...library.docs].filter((item) => shown === "all" || (item.kind || "worksheet") === shown);
   items.sort(SORTS[$("home-sort").value] || SORTS.recent);
   // Indexing has its own status on the Library page.
-  const made = library.requests.filter((request) => request.form.kind !== "index");
+  const made = library.requests.filter((request) => request.form.kind !== "index" && !isCourseRequest(request));
   const rows = [...made.map(requestRow), ...items.map((item) => (item.kind ? docRow(item) : setRow(item)))];
   const empty = shown === "all" ? "Nothing here yet. Press New to make your first one." : "None of these yet. Press New to make one.";
   $("main").replaceChildren(...(rows.length ? rows : [el("p", { class: "muted", text: empty })]));
@@ -1122,26 +1240,35 @@ async function loadHome() {
 
 async function changeRequest(action, id) {
   home.waiting.delete(id);
+  courses.waiting.delete(id);
   try {
-    renderHome(await api("/api/action", { method: "POST", body: JSON.stringify({ action, id }) }));
+    const library = await api("/api/action", { method: "POST", body: JSON.stringify({ action, id }) });
+    await afterRequest(library);
   } catch (error) {
     toast(error.message);
   }
 }
 
+async function afterRequest(library) {
+  if (COURSE_ID) return loadCourse();
+  if (COURSES_PAGE) return loadCourses();
+  return renderHome(library);
+}
+
 function openNewForm() {
   $("new-form").reset();
   $("new-error").hidden = true;
-  const latest = [...home.library.sets, ...home.library.docs].sort(SORTS.newest)[0];
+  const latest = home.library ? [...home.library.sets, ...home.library.docs].sort(SORTS.newest)[0] : null;
   if (latest && latest.textbook) {
     $("new-book").value = latest.textbook.name || "";
     $("new-edition").value = latest.textbook.edition || "";
   }
   $("new-subject").value = (latest && latest.subject) || "";
+  if (COURSES_PAGE) $("new-kind").value = "course";
   showKindFields();
   fillLibraryClasses();
   $("new-dialog").showModal();
-  $("new-topics").focus();
+  $($("new-kind").value === "course" ? "new-goal" : "new-topics").focus();
 }
 
 async function fillLibraryClasses() {
@@ -1156,6 +1283,8 @@ function showKindFields() {
   const kind = $("new-kind").value;
   for (const node of document.querySelectorAll(".only-worksheet")) node.hidden = kind !== "worksheet";
   for (const node of document.querySelectorAll(".only-guide")) node.hidden = kind !== "study_guide";
+  for (const node of document.querySelectorAll(".only-course")) node.hidden = kind !== "course";
+  for (const node of document.querySelectorAll(".not-course")) node.hidden = kind === "course";
 }
 
 async function submitNewForm(event) {
@@ -1169,10 +1298,12 @@ async function submitNewForm(event) {
       book: $("new-book").value, edition: $("new-edition").value, topics: $("new-topics").value,
       count: $("new-count").value, difficulty: $("new-difficulty").value,
       focus: $("new-focus").value, typed: $("new-typed").value, pages: $("new-pages").value,
+      goal: $("new-goal").value, background: $("new-background").value, time_per_week: $("new-time").value,
+      materials: $("new-materials").value,
     };
     const library = await api("/api/action", { method: "POST", body: JSON.stringify({ action: "request_set", form }) });
     $("new-dialog").close();
-    renderHome(library);
+    await afterRequest(library);
   } catch (error) {
     $("new-error").textContent = error.message;
     $("new-error").hidden = false;
@@ -1195,10 +1326,196 @@ function setupHome() {
   });
   $("new-kind").addEventListener("change", showKindFields);
   $("library-link").href = `?${new URLSearchParams({ token: TOKEN, library: "1" })}`;
+  $("courses-link").href = coursesAddress();
   $("help-link").href = `?${new URLSearchParams({ token: TOKEN, help: "1" })}`;
   $("new-set").addEventListener("click", openNewForm);
   $("new-cancel").addEventListener("click", () => $("new-dialog").close());
   $("new-form").addEventListener("submit", submitNewForm);
+}
+
+// --- Courses (experimental) ------------------------------------------------------
+
+const PHASE_NAMES = { intake: "Starting", research: "Researching", planning: "Planning", syllabus: "Writing the syllabus",
+  active: "In progress", complete: "Complete" };
+const PHASE_NOTES = {
+  research: "Claude is researching the topic. It will propose a syllabus in your terminal.",
+  planning: "Claude is agreeing the style, checks and mastery bar with you in your terminal.",
+  syllabus: "Claude is writing the syllabus you agreed on.",
+};
+const STATUS_NAMES = { locked: "Locked", available: "Available", generating: "Being made", in_progress: "In progress",
+  mastered: "Mastered", tested_out: "Tested out" };
+const EXAMPLE_NAMES = { worked_first: "worked examples first", after_theory: "examples after the theory", none: "no worked examples" };
+const courses = { waiting: new Set(), pollTimer: null };
+const coursesAddress = () => `?${new URLSearchParams({ token: TOKEN, courses: "1" })}`;
+const courseAddress = (id) => `?${new URLSearchParams({ token: TOKEN, course: id })}`;
+const docAddress = (id) => `?${new URLSearchParams({ token: TOKEN, doc: id })}`;
+const percent = (ratio) => `${Math.round(ratio * 100)}%`;
+
+function noteReady(requests) {
+  const waiting = new Set(requests.filter((r) => r.state === "waiting").map((r) => r.id));
+  if ([...courses.waiting].some((id) => !waiting.has(id))) toast("It's ready.");
+  courses.waiting = waiting;
+  return waiting.size > 0;
+}
+
+function pollCourses(busy, load) {
+  clearTimeout(courses.pollTimer);
+  if (busy) courses.pollTimer = setTimeout(() => load().catch((error) => toast(error.message)), POLL_MS);
+}
+
+function courseRow(course) {
+  const progress = course.sections ? `${course.done} of ${course.sections} sections mastered` : PHASE_NAMES[course.phase];
+  return el("a", { class: "set-row", href: courseAddress(course.id), "data-course": course.id },
+    el("div", { class: "info" },
+      el("span", { class: "name", text: course.title }),
+      el("span", { class: "chip experimental", text: "Experimental" }),
+      el("span", { class: "chip", text: PHASE_NAMES[course.phase] }),
+      el("div", { class: "muted", text: `Started ${shortDate(course.created_at)}` })),
+    el("div", { class: "status" }, el("div", { text: progress })));
+}
+
+function renderCourses(view) {
+  $("home-title").textContent = "Courses";
+  const started = view.requests.filter((r) => r.form.kind === "course");
+  const rows = [...started.map(requestRow), ...view.courses.map(courseRow)];
+  $("main").replaceChildren(
+    el("p", { class: "note-box course-intro", html: "Courses are <b>experimental</b>. A course teaches a topic you're new to, "
+      + "one section at a time, and a section opens once you've mastered the ones it builds on." }),
+    ...(rows.length ? rows : [el("p", { class: "muted", text: "No courses yet. Press New to start one." })]));
+  const busy = noteReady(view.requests) || view.courses.some((c) => ["intake", "research", "planning", "syllabus"].includes(c.phase));
+  pollCourses(busy, loadCourses);
+}
+
+async function loadCourses() {
+  renderCourses(await api("/api/courses"));
+}
+
+async function courseAct(body, button) {
+  if (button) button.disabled = true;
+  try {
+    const reply = await api("/api/action", { method: "POST", body: JSON.stringify(body) });
+    if (reply.course) renderCourse(reply);
+    return reply;
+  } catch (error) {
+    toast(error.message);
+    if (button) button.disabled = false;
+    return null;
+  }
+}
+
+function coursePlan(course) {
+  const { plan } = course;
+  if (!plan) return null;
+  const { presentation, assessment, mastery } = plan;
+  const rows = [
+    ["Style", presentation.style || "Not set"],
+    ["Examples", `${EXAMPLE_NAMES[presentation.examples]}, ${presentation.figures ? "with" : "without"} plots and diagrams`],
+    ["Checks", assessment.default_kinds.map((kind) => kind.replace("_", " ")).join(", ")],
+    ["Mastery", `${percent(mastery.threshold)} right, with hints on at most ${percent(mastery.max_hints_ratio)} of the items`],
+    ...(plan.pacing ? [["Pacing", plan.pacing]] : []),
+  ];
+  const change = el("button", { type: "button", text: "Change plan", "data-course-action": "change_plan" });
+  change.addEventListener("click", () => courseAct({ action: "course_request", kind: "change_plan", course: course.id }, change));
+  return el("section", { class: "course-plan" }, el("h2", { text: "Plan" }),
+    el("dl", {}, ...rows.flatMap(([term, value]) => [el("dt", { text: term }), el("dd", { text: value })])),
+    el("div", { class: "actions" }, change));
+}
+
+function sectionCard(course, section, titles, linked) {
+  const lastTry = section.attempts[section.attempts.length - 1];
+  const card = el("article", { class: "course-section", "data-section": section.id, "data-status": section.status },
+    el("div", { class: "course-section-head" },
+      el("span", { class: "name", text: section.title }),
+      el("span", { class: `chip status-${section.status}`, text: STATUS_NAMES[section.status] }),
+      section.mastery && el("span", { class: "muted", text: `Best: ${percent(section.mastery.score)}` })));
+  card.append(el("ul", { class: "objectives" }, ...section.objectives.map((objective) => el("li", { html: richText(objective) }))));
+  if (section.prereqs.length) {
+    card.append(el("div", { class: "muted", text: `Needs: ${section.prereqs.map((id) => titles[id] || id).join(", ")}` }));
+  }
+  const links = [];
+  if (section.lesson_doc) links.push(el("a", { href: docAddress(section.lesson_doc), "data-lesson": section.id, text: "Lesson" }));
+  if (section.check_set) {
+    const set = linked[section.check_set] || {};
+    links.push(el("a", { href: setAddress(section.check_set), "data-check": section.id,
+      text: set.total ? `Check (${set.done} of ${set.total} done)` : "Check" }));
+  }
+  for (const setId of section.practice_sets) links.push(el("a", { href: setAddress(setId), text: (linked[setId] || {}).title || "Practice" }));
+  if (links.length) card.append(el("div", { class: "course-links" }, ...links));
+  if (lastTry && !lastTry.passed) {
+    card.append(el("div", { class: "muted", text: `Last check: ${lastTry.correct} of ${lastTry.total}. Not mastered yet.` }));
+  }
+  const actions = [];
+  if (section.status === "available" && !section.lesson_doc) {
+    const make = el("button", { type: "button", class: "primary", text: "Generate", "data-generate": section.id });
+    make.addEventListener("click", () => courseAct({ action: "course_request", kind: "next_section", course: course.id, section: section.id }, make));
+    actions.push(make);
+  }
+  if (section.status === "in_progress" && section.check_set && lastTry && !lastTry.passed) {
+    const retry = el("button", { type: "button", text: "Retry check", "data-retry": section.id });
+    retry.addEventListener("click", () => courseAct({ action: "course_request", kind: "retry_check", course: course.id, section: section.id }, retry));
+    actions.push(retry);
+  }
+  if (actions.length) card.append(el("div", { class: "actions" }, ...actions));
+  return card;
+}
+
+function courseSyllabus(course, linked) {
+  if (!course.chapters.length) return null;
+  const sections = course.chapters.flatMap((chapter) => chapter.sections);
+  const titles = Object.fromEntries(sections.map((section) => [section.id, section.title]));
+  const edit = el("button", { type: "button", text: "Edit syllabus", "data-course-action": "edit_syllabus" });
+  edit.addEventListener("click", () => courseAct({ action: "course_request", kind: "edit_syllabus", course: course.id }, edit));
+  return el("section", { class: "course-syllabus" },
+    el("div", { class: "course-syllabus-head" }, el("h2", { text: "Syllabus" }), edit),
+    ...course.chapters.map((chapter) => el("div", { class: "course-chapter" }, el("h3", { text: chapter.title }),
+      ...chapter.sections.map((section) => sectionCard(course, section, titles, linked)))));
+}
+
+function coursePlacement(course) {
+  const placement = course.placement;
+  if (!placement || !placement.set) return null;
+  return el("p", { class: "note-box" }, el("a", { href: setAddress(placement.set), text: "Placement quiz" }),
+    document.createTextNode(placement.result ? " Done. Sections you passed are marked tested out."
+      : " Take it in Exam mode. Each section you pass is marked tested out."));
+}
+
+function courseHistory(course) {
+  if (!course.history.length) return null;
+  return el("details", { class: "course-history" }, el("summary", { text: "History" }),
+    el("ul", {}, ...[...course.history].reverse().map((entry) => el("li", {},
+      el("span", { class: "muted", text: `${shortDate(entry.at)} ` }), document.createTextNode(entry.change)))));
+}
+
+function renderCourse(view) {
+  const { course } = view;
+  document.title = `${course.title} (course)`;
+  $("home-title").textContent = course.title;
+  const remove = el("button", { type: "button", class: "danger", text: "Delete course", "data-course-action": "delete" });
+  remove.addEventListener("click", async () => {
+    if (!confirm("Delete this course? Its lessons and checks stay in your list.")) return;
+    const done = await courseAct({ action: "course_delete", id: course.id }, remove);
+    if (done) location.href = coursesAddress();
+  });
+  $("main").replaceChildren(...[
+    el("a", { class: "back-link", href: coursesAddress(), text: "All courses" }),
+    el("div", { class: "course-head" },
+      el("span", { class: "chip experimental", text: "Experimental" }),
+      el("span", { class: "chip", "data-phase": course.phase, text: PHASE_NAMES[course.phase] }),
+      el("span", { class: "muted", text: course.intake.goal })),
+    PHASE_NOTES[course.phase] && el("p", { class: "note-box", text: PHASE_NOTES[course.phase] }),
+    ...view.requests.map(requestRow),
+    coursePlacement(course),
+    courseSyllabus(course, view.linked),
+    coursePlan(course),
+    courseHistory(course),
+    el("div", { class: "actions course-danger" }, remove),
+  ].filter(Boolean));
+  const generating = course.chapters.some((chapter) => chapter.sections.some((section) => section.status === "generating"));
+  pollCourses(noteReady(view.requests) || generating || Boolean(PHASE_NOTES[course.phase]), loadCourse);
+}
+
+async function loadCourse() {
+  renderCourse(await api(`/api/course?${new URLSearchParams({ id: COURSE_ID })}`));
 }
 
 // --- Study guides and equation sheets ------------------------------------------
@@ -1830,6 +2147,11 @@ async function start() {
     }
     if (LIBRARY_PAGE) {
       await startLibrary();
+      return;
+    }
+    if (COURSE_ID || COURSES_PAGE) {
+      setupHome();
+      await (COURSE_ID ? loadCourse() : loadCourses());
       return;
     }
     if (DOC_ID) {

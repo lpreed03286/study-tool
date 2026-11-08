@@ -1590,3 +1590,162 @@ def test_export_and_import_need_the_private_key(server):
         with pytest.raises(urllib.error.HTTPError) as refused:
             urllib.request.urlopen(request, timeout=5)
         assert refused.value.code == 403
+
+
+# --- Courses (experimental) ---------------------------------------------------------
+
+COURSE_PAGE = ("<html><body><p>Kepler's laws describe how planets move around the Sun in ellipses.</p>"
+               + "<p>Orbital mechanics applies these laws to satellites, probes and spacecraft of every size.</p>" * 20
+               + "</body></html>")
+COURSE_PLAN = {"presentation": {"style": "Concise, worked examples first", "examples": "worked_first", "figures": True},
+               "assessment": {"default_kinds": ["multiple_choice", "numeric"]}, "mastery": {"threshold": 0.8, "max_hints_ratio": 0.5}}
+COURSE_SYLLABUS = [{"id": "c1", "title": "Kepler", "sections": [
+    {"id": "c1-s1", "title": "Orbit shapes", "objectives": ["Name the shape of an orbit"], "prereqs": []},
+    {"id": "c1-s2", "title": "Periods", "objectives": ["Use the third law"], "prereqs": ["c1-s1"]}]}]
+COURSE_ITEMS = {"statement": "\\text{Check: orbit shapes}", "method": "course_items", "section": "c1-s1", "topic": "Orbits", "items": [
+    {"kind": "multiple_choice", "prompt": "What shape is a planet's orbit?", "objective": "Name the shape of an orbit",
+     "options": ["A circle", "An ellipse", "A parabola"], "correct": 1, "nudge": "Kepler's first law.", "method_hint": "Not a circle.",
+     "own_words": True},
+    {"kind": "multiple_choice", "prompt": "Which are conic sections?", "objective": "Name the shape of an orbit",
+     "options": ["Ellipse", "Square", "Hyperbola"], "correct": [0, 2], "nudge": "Slice a cone.", "method_hint": "Curves.",
+     "own_words": True},
+    {"kind": "numeric", "prompt": "Gravity at Earth's surface.", "objective": "Name the shape of an orbit", "answer": "9.81",
+     "unit": "m/s^2", "tolerance": {"absolute": 0.05}, "nudge": "About ten.", "method_hint": "g.", "own_words": True}]}
+
+
+@pytest.fixture(scope="module")
+def course_site():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = COURSE_PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    running = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=running.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{running.server_port}"
+    running.shutdown()
+
+
+def make_course(server, site, goal=None):
+    goal = goal or f"Orbital mechanics {time.time_ns()}"
+    course = server.tool("course_create", goal=goal)["course"]
+    saved = server.tool("course_save_research", course=course, summary="Start with Kepler.",
+                        sources=[{"title": "Kepler", "url": f"{site}/kepler", "quote": "Kepler's laws describe how planets move around the Sun"}])
+    assert saved["saved"], saved
+    server.tool("course_save_plan", course=course, plan=COURSE_PLAN)
+    server.tool("course_save_syllabus", course=course, chapters=COURSE_SYLLABUS)
+    return course
+
+
+def wait_for_prompt(server, before):
+    for _ in range(50):
+        if len(server.prompts) > before:
+            return server.prompts[-1]
+        time.sleep(0.1)
+    raise AssertionError("no prompt was sent")
+
+
+def test_the_new_form_starts_a_course_and_it_shows_on_the_courses_page(server, home):
+    before = len(server.prompts)
+    home.locator("#new-set").click()
+    home.select_option("#new-kind", "course")
+    assert home.locator("#new-goal").is_visible() and not home.locator("#new-topics").is_visible()
+    assert not home.locator("#new-book").is_visible()
+    home.locator("#new-submit").click()
+    home.wait_for_function("document.getElementById('new-error').textContent.includes('what you want to learn')")
+    home.errors.clear()
+    goal = f"Music theory from zero {time.time_ns()}"
+    home.fill("#new-goal", goal)
+    home.fill("#new-time", "2 hours")
+    home.locator("#new-submit").click()
+    sent = wait_for_prompt(server, before)
+    assert "make-course" in sent["text"] and goal in sent["text"] and "2 hours" in sent["text"]
+    assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0, "course requests live on the Courses page"
+
+    home.locator("#courses-link").click()
+    home.locator(f".set-row[data-request='{sent['id']}']").wait_for()
+    made = server.tool("course_create", goal=goal, request_id=sent["id"])
+    row = home.locator(f".set-row[data-course='{made['course']}']")
+    row.wait_for(timeout=8000)
+    assert "Experimental" in row.inner_text() and "Researching" in row.inner_text()
+    assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0
+    home.screenshot(path=SHOTS / f"60-courses-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
+
+
+def test_the_course_page_shows_statuses_and_generate_sends_a_request(server, home, course_site):
+    course = make_course(server, course_site)
+    before = len(server.prompts)
+    home.goto(f"{server.url}&course={course}")
+    first = home.locator(".course-section[data-section='c1-s1']")
+    first.wait_for()
+    assert "Available" in first.inner_text()
+    locked = home.locator(".course-section[data-section='c1-s2']")
+    assert "Locked" in locked.inner_text() and "Needs: Orbit shapes" in locked.inner_text()
+    assert locked.locator("[data-generate]").count() == 0
+    assert "Concise, worked examples first" in home.locator(".course-plan").inner_text()
+    home.screenshot(path=SHOTS / f"61-course-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
+
+    home.locator("[data-generate='c1-s1']").click()
+    sent = wait_for_prompt(server, before)
+    assert f"course {course}, section c1-s1" in sent["text"] and "step 5" in sent["text"]
+    home.locator(f".set-row[data-request='{sent['id']}']").wait_for()
+    home.wait_for_function("document.querySelector(\".course-section[data-section='c1-s1']\").innerText.includes('Being made')")
+
+    server.tool("create_doc", kind="study_guide", title="Orbit shapes", course=course, section="c1-s1", course_role="lesson",
+                blocks=[{"type": "text", "text": "Orbits are ellipses.", "own_words": True}])
+    made = server.tool("create_set", title="Orbit check", textbook={"name": "Orbital mechanics"}, problems=[COURSE_ITEMS],
+                       course=course, section="c1-s1", course_role="check", request_id=sent["id"])
+    assert made["created"], made
+    home.locator("[data-check='c1-s1']").wait_for(timeout=8000)
+    assert home.locator("[data-lesson='c1-s1']").count() == 1
+    assert home.locator(f".set-row[data-request='{sent['id']}']").count() == 0
+    assert "In progress" in first.inner_text()
+
+
+def test_course_check_items_take_choices_and_a_number_with_its_unit(server, home, course_site):
+    course = make_course(server, course_site)
+    made = server.tool("create_set", title="Orbit check", textbook={"name": "Orbital mechanics"}, problems=[COURSE_ITEMS],
+                       course=course, section="c1-s1", course_role="check")
+    home.goto(f"{server.url}&set={made['set']}")
+    choices = home.locator("[data-open-step] fieldset.choices")
+    choices.wait_for()
+    assert "Choose one" in choices.inner_text()
+    choices.locator("label").nth(1).click()
+    home.locator("[data-open-step] [data-action='submit']").click()
+    multi = home.locator("[data-open-step='q2'] fieldset.choices")
+    multi.wait_for()
+    assert home.locator(".step.correct .course-answer").first.inner_text() == "An ellipse"
+    assert home.locator(f"[data-course-link='{course}']").count() == 1
+    assert "confirm the topic" not in home.locator("section.problem-card").inner_text()
+    assert home.locator("details.own-method.problem-card").count() == 0, "no typed ODE problems in a course check"
+    assert "Choose all that apply" in multi.inner_text()
+    multi.locator("label").nth(0).click()
+    multi.locator("label").nth(2).click()
+    home.locator("[data-open-step='q2'] [data-action='submit']").click()
+    number = home.locator("[data-open-step='q3'] input[data-numeric]")
+    number.wait_for()
+    assert home.locator("[data-open-step='q3'] .unit").inner_text() == "m/s^2"
+    assert "Give the answer in m/s^2." in home.locator("[data-open-step='q3'] .prompt").inner_text()
+    number.fill("9.8 ft/s^2")
+    number.press("Enter")
+    home.locator("[data-open-step='q3'] .feedback").wait_for()
+    assert "unit is already given" in home.locator("[data-open-step='q3'] .feedback").inner_text()
+    number.fill("9.8")
+    number.press("Enter")
+    home.locator("[data-open-step='q3']").wait_for(state="detached")
+    home.screenshot(path=SHOTS / f"62-course-check-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
+
+    home.goto(f"{server.url}&course={course}")
+    first = home.locator(".course-section[data-section='c1-s1']")
+    first.wait_for()
+    assert "Mastered" in first.inner_text() and "Best: 100%" in first.inner_text()
+    assert "Available" in home.locator(".course-section[data-section='c1-s2']").inner_text()

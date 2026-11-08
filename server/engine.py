@@ -31,7 +31,8 @@ NEUTRAL_RATE_ATTEMPTS = 3  # how many tries' worth of doubt a step type starts w
 DIFFICULTIES = ("textbook", "easier", "harder", "challenge")
 MAX_REQUESTED_PROBLEMS = 30
 DOC_KINDS = {"study_guide", "equation_sheet"}
-FORM_KINDS = {"worksheet", *DOC_KINDS}
+FORM_KINDS = {"worksheet", *DOC_KINDS, "course"}
+COURSE_ASK_KINDS = {"next_section", "retry_check", "edit_syllabus", "change_plan"}
 EXAMPLE_SECONDS = 240
 DOC_BASE_SECONDS = 60
 CONCEPT_METHOD = "concept_questions"  # Teaches no section's technique, so it needs no repertoire check.
@@ -388,7 +389,17 @@ class Engine:
         return read_json(self._requests_path, [])
 
     @staticmethod
+    def _clean_course_form(form: dict) -> dict:
+        clean = {key: str(form.get(key) or "").strip()
+                 for key in ("goal", "background", "time_per_week", "materials", "library_class")}
+        if not clean["goal"]:
+            raise UserError("Say what you want to learn. One sentence is enough.")
+        return {**clean, "kind": "course"}
+
+    @staticmethod
     def _clean_form(form: dict) -> dict:
+        if form.get("kind") == "course":
+            return Engine._clean_course_form(form)
         clean = {key: str(form.get(key) or "").strip()
                  for key in ("subject", "book", "edition", "topics", "focus", "typed", "pages", "library_class")}
         kind = form.get("kind") or "worksheet"
@@ -438,6 +449,8 @@ class Engine:
         request = self._update_request(request_id, state="waiting", reason="")
         if not request:
             raise UserError("That request is gone. Press New to make it again.")
+        if request["form"].get("kind") == "next_section":
+            self.courses.set_generating(request["form"]["course"], request["form"]["section"], request_id)
         self._send_request(request)
         return self.home_view()
 
@@ -517,6 +530,18 @@ class Engine:
             "title": course["title"], "goal": course["intake"]["goal"], "background": course["intake"]["background"],
             "style": presentation.get("style", ""), "notes": presentation.get("notes", "")}}
 
+    def _course_label(self, link: dict) -> dict:
+        """What a course set's page shows about the course, or just the ids if it's gone."""
+        label = {"id": link["id"], "role": link["role"], "section": link.get("section"), "title": "", "section_title": ""}
+        try:
+            course = self.courses.get(link["id"])
+            label["title"] = course["title"]
+            if link.get("section"):
+                label["section_title"] = self.courses.section(course, link["section"])["title"]
+        except CourseError:
+            pass
+        return label
+
     def _course_progress(self, set_id: str) -> None:
         """Records a finished course check. Never lets a course problem break the worksheet."""
         try:
@@ -583,6 +608,70 @@ class Engine:
                 # A problem skipped before the exam still counts against the check.
                 items.append(self._item(problem, step, correct=bool(row) and row["status"] == "correct", skipped=row is None))
         return items
+
+    def course_request(self, body: dict) -> dict:
+        """A button on the course page. It becomes a request to Claude like the New form's."""
+        kind = body.get("kind")
+        if kind not in COURSE_ASK_KINDS:
+            raise UserError("That isn't something the course page can ask for.")
+        course = self.courses.get(body.get("course", ""))
+        section_id = str(body.get("section") or "")
+        if kind in ("next_section", "retry_check"):
+            section = self.courses.section(course, section_id)
+            if kind == "next_section" and section["status"] != "available":
+                raise UserError("Only an available section with nothing made yet can be generated.")
+            if kind == "retry_check" and not (section["check_set"] and section["status"] == "in_progress"):
+                raise UserError("A retry check is for a section whose check you've taken but not passed yet.")
+        form = {"kind": kind, "course": course["id"], "section": section_id, "note": str(body.get("note") or "").strip()[:500],
+                "title": course["title"]}
+        request = {"id": uuid.uuid4().hex[:12], "created_at": time.time(), "form": form, "state": "waiting"}
+        if kind == "next_section":
+            self.courses.set_generating(course["id"], section_id, request["id"])
+        with self.lock:
+            write_json(self._requests_path, [*self._load_requests(), request])
+        self._send_request(request)
+        return self.course_view(course["id"])
+
+    def course_delete(self, course_id: str, remove_items: bool) -> dict:
+        """Its documents and sets stay as ordinary items unless the student chose otherwise."""
+        items = self.courses.delete(course_id)
+        if remove_items:
+            for item in items:
+                if item["kind"] == "doc":
+                    self._doc_path(item["id"]).unlink(missing_ok=True)
+                else:
+                    self._set_path(item["id"]).unlink(missing_ok=True)
+                    self._progress_path(item["id"]).unlink(missing_ok=True)
+        return self.courses_view()
+
+    def _course_requests(self, course_id: str | None = None) -> list[dict]:
+        kinds = COURSE_ASK_KINDS | {"course"}
+        return [r for r in self._load_requests() if r["form"].get("kind") in kinds
+                and (course_id is None or r["form"].get("course") == course_id)]
+
+    def courses_view(self) -> dict:
+        return {"courses": [self.courses.summary(c) for c in self.courses.all()], "requests": self._course_requests()}
+
+    def course_view(self, course_id: str) -> dict:
+        """The course with the titles and progress of what's linked, so the page needs one call."""
+        course = self.courses.get(course_id)
+        linked: dict[str, dict] = {}
+        for section in self.courses.sections(course):
+            if section.get("lesson_doc") and self._doc_path(section["lesson_doc"]).exists():
+                linked[section["lesson_doc"]] = {"title": read_json(self._doc_path(section["lesson_doc"]), {}).get("title", "")}
+            for set_id in [section.get("check_set"), *section.get("practice_sets", [])]:
+                if set_id and self._set_path(set_id).exists():
+                    linked[set_id] = self._set_summary(set_id)
+        placement = (course.get("placement") or {}).get("set")
+        if placement and self._set_path(placement).exists():
+            linked[placement] = self._set_summary(placement)
+        return {"course": course, "linked": linked, "requests": self._course_requests(course_id)}
+
+    def _set_summary(self, set_id: str) -> dict:
+        worksheet = self.load_set(set_id)
+        progress = self.load_progress(set_id)
+        tabs = [self._tab_view(n, p, progress) for n, p in enumerate(worksheet["problems"], 1)]
+        return {"title": worksheet["title"], "done": sum(t["done"] for t in tabs), "total": sum(t["total"] for t in tabs)}
 
     def course_create(self, args: dict) -> dict:
         course = self.courses.create(args)
@@ -1203,7 +1292,9 @@ class Engine:
                 else:
                     graded = {"status": "blank", "message": "Left blank.", "rename": {}}
                 rename.update(graded.get("rename") or {})
-                row = {"status": graded["status"], "message": graded["message"], "answer": latex,
+                # A choice is sent as option numbers, so show the options it means.
+                shown = graded.get("readback") if step["check"]["kind"] in ("multiple_choice", "numeric") else ""
+                row = {"status": graded["status"], "message": graded["message"], "answer": shown or latex,
                        "key": step["answer"], "label": step["label"], "type": step["type"], "pending": False,
                        "key_format": step.get("answer_format", "math"), **_citation(step)}
                 if own and own.get("work", "").strip():
@@ -1296,6 +1387,8 @@ class Engine:
             "exam": self._exam_view(worksheet, exam),
             "fade": progress.get("fade", 0),
         }
+        if worksheet.get("course"):
+            result["set"]["course"] = self._course_label(worksheet["course"])
         if active is not None:
             result["problem"] = self._exam_problem_view(worksheet, active, exam) if in_exam else \
                 self._problem_view(worksheet, active, progress)
