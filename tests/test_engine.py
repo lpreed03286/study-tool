@@ -163,6 +163,38 @@ def test_wrong_answer_keeps_it_and_offers_explain(world):
     assert view["problem"]["steps"][1]["id"] == "identify"
 
 
+def test_explanation_is_told_the_earlier_steps_and_their_symbols(world):
+    engine, claude = world
+    set_id = make_set(engine)
+    assert engine.submit(set_id, "p2", "standard", "y'+2y=e^{x}")["problem"]["steps"][0]["status"] == "correct"
+    engine.submit(set_id, "p2", "identify", "p=2,r=3")
+    assert engine.explain(set_id, "p2", "identify")["ask"]
+    prompt = claude.asks[-1]["prompt"]
+    assert "Earlier steps of this problem" in prompt
+    assert "y'+2y=e^{x}" in prompt.split("Current step:")[0]
+    assert "Never renumber a basis" in prompt
+
+
+def test_explanation_shows_as_pending_and_a_second_click_doesnt_repeat_it(world):
+    engine, claude = world
+    set_id = make_set(engine)
+    engine.submit(set_id, "p2", "standard", "y'-2y=e^{x}")
+    assert not open_step(engine.view(set_id, "p2"))["explaining"]
+    first = engine.explain(set_id, "p2", "standard")
+    asked = len(claude.asks)
+    assert open_step(engine.view(set_id, "p2"))["explaining"] == first["ask"]
+    assert engine.explain(set_id, "p2", "standard")["ask"] == first["ask"]
+    assert len(claude.asks) == asked
+    # A new wrong answer isn't the one being explained.
+    engine.submit(set_id, "p2", "standard", "y'-3y=e^{x}")
+    assert not open_step(engine.view(set_id, "p2"))["explaining"]
+    engine.submit(set_id, "p2", "standard", "y'-2y=e^{x}")
+    claude.answer("Your sign on $2y$ flipped.")
+    step = open_step(engine.view(set_id, "p2"))
+    assert not step["explaining"]
+    assert len(step["explanations"]) == 1
+
+
 def test_explanation_falls_back_to_sympy_without_claude(world):
     engine, _ = world
     set_id = make_set(engine)

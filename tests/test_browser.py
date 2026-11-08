@@ -46,6 +46,7 @@ class Server:
         self.port, self.token, self.url = ready["port"], ready["token"], ready["url"]
         self.claude_replies = []
         self.prompts = []
+        self.explain_delay = 0
         threading.Thread(target=self._fake_claude, daemon=True).start()
 
     def _fake_claude(self):
@@ -62,6 +63,8 @@ class Server:
                     "concept": '{"valid": false, "reason": "You named one method, but there is a second one."}'
                     if "only one" in event["prompt"] else '{"valid": true, "reason": "Both methods are right."}'}[event["kind"]]
             self.claude_replies.append(event)
+            if event["kind"] == "explain":
+                time.sleep(self.explain_delay)
             self.post("/internal/ask_result", {"id": event["id"], "text": text})
 
     def post(self, path, body):
@@ -194,6 +197,49 @@ def test_undetermined_coefficients_with_real_keystrokes(page):
     assert solution.locator(".solution-row").count() == 11
     assert "checkodesol passed" in solution.inner_text()
     page.screenshot(path=SHOTS / "3-solution.png", full_page=True)
+
+
+def test_explanation_shows_it_is_loading_and_appears_by_itself(page, server):
+    page.locator(".tab").nth(1).click()
+    page.wait_for_function("document.querySelector('.tab[aria-selected=true]').dataset.tab === 'p2'")
+    page.wait_for_selector("article[data-open-step='standard']")
+    press_math(page, "y'-2y=e^", "x", RIGHT)
+    page.locator("[data-action='submit']").click()
+    page.wait_for_selector(".feedback.incorrect")
+    asked = sum(ask["kind"] == "explain" for ask in server.claude_replies)
+    server.explain_delay = 3
+    try:
+        page.locator("[data-action='explain']").click()
+        page.wait_for_selector("[data-explaining]")
+        button = page.locator("[data-action='explain']")
+        assert button.is_disabled()
+        assert button.inner_text() == "Explaining..."
+        assert page.locator("[data-explanation]").count() == 0
+        # The redrawn box comes back with the answer selected, and it must still be readable.
+        page.wait_for_timeout(300)
+        shown = field(page).evaluate("""node => {
+            const atoms = [...node.shadowRoot.querySelectorAll('.ML__base span')].filter(e => e.textContent.trim());
+            return {selected: node.shadowRoot.querySelectorAll('.ML__selected').length,
+                    colors: [...new Set(atoms.map(e => getComputedStyle(e).color))], ink: getComputedStyle(node).color};
+        }""")
+        assert shown["selected"] and shown["colors"] == [shown["ink"]], shown
+        page.screenshot(path=SHOTS / "5a-explaining.png")
+        # A reload still knows it's loading, and still shows it when it's done.
+        page.reload()
+        page.wait_for_selector("[data-explaining]")
+        # They can keep working, and the cursor stays inside the fraction they're in.
+        field(page).click()
+        page.keyboard.press("End")
+        press_math(page, "+1/2")
+        page.wait_for_selector("[data-explanation]", timeout=15000)
+        assert page.locator("[data-explaining]").count() == 0
+        assert "sign on" in page.locator("[data-explanation]").inner_text()
+        assert button.is_disabled() and button.inner_text() == "Explain why"
+        page.keyboard.type("3")
+        assert "\\frac{1}{23}" in field(page).evaluate("node => node.value")
+    finally:
+        server.explain_delay = 0
+    assert sum(ask["kind"] == "explain" for ask in server.claude_replies) == asked + 1
 
 
 def test_first_order_with_wrong_answer_explain_and_retry(page, server):

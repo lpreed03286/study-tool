@@ -103,11 +103,28 @@ def _system(worksheet: dict, problem: dict) -> str:
     )
 
 
+def _earlier_steps(problem: dict, step: dict) -> str:
+    """What the student has already seen, since a later step's prompt may not restate it."""
+    lines = []
+    for earlier in problem["plan"]["steps"]:
+        if earlier["id"] == step["id"]:
+            break
+        if earlier.get("answer_format") != "text":
+            lines.append(f"- {earlier['label']}. {earlier['prompt']} Key: {earlier['answer']}")
+    if not lines:
+        return ""
+    return "Earlier steps of this problem, as the student saw them:\n" + "\n".join(lines) + "\n"
+
+
 def _context(problem: dict, step: dict) -> str:
     context = f"Setting: {problem['context']}\n" if problem.get("context") else ""
     return (f"{context}The problem: {problem['statement']}\n"
             f"Method: {problem['method']}\n"
-            f"Current step: {step['label']}. The prompt was: {step['prompt']}\n")
+            + _earlier_steps(problem, step)
+            + f"Current step: {step['label']}. The prompt was: {step['prompt']}\n"
+            "Use the symbols on this worksheet exactly as these steps do: the same names, subscripts and numbering, "
+            "such as which function is $y_1$. They take priority over the book's notation. "
+            "Never renumber a basis or rename a symbol.\n")
 
 
 def explain(worksheet: dict, problem: dict, step: dict, answer: str, readback: str, diagnosis: str) -> dict:

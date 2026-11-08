@@ -49,6 +49,9 @@
 
 * { box-sizing: border-box; }
 
+/* The browser's default selection colors can match the text, so set both. */
+::selection { background: var(--accent); color: var(--accent-ink); }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -189,7 +192,10 @@ math-field {
   background: var(--panel);
   color: var(--ink);
   --caret-color: var(--accent);
+  /* MathLive doesn't always draw the selection background, so the text has to read without it. */
   --selection-background-color: var(--soft);
+  --selection-color: var(--ink);
+  --contains-highlight-background-color: var(--soft);
 }
 math-field:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { display: none; }
@@ -218,6 +224,18 @@ math-field::part(virtual-keyboard-toggle), math-field::part(menu-toggle) { displ
   margin-top: 10px;
   overflow-x: auto;
 }
+.note-box.explaining { display: flex; align-items: center; gap: 10px; }
+.spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 .note-box h4 { margin: 0 0 2px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .note-box p { margin: 0; }
 .note-box p + p { margin-top: 6px; }

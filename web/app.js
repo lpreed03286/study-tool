@@ -155,6 +155,34 @@ function render(view) {
   renderHeader(view);
   renderMain(view);
   restoreFocus(focusInfo);
+  const waiting = view.problem && (view.problem.steps || []).find((step) => step.explaining);
+  if (waiting) watchExplanation(waiting.explaining);
+}
+
+function watchExplanation(askId) {
+  if (state.watching === askId) return;
+  state.watching = askId;
+  waitForAsk(askId)
+    .then(showReadyExplanation)
+    .catch((error) => toast(error.message))
+    .finally(() => {
+      if (state.watching === askId) state.watching = null;
+    });
+}
+
+// Adds the explanation in place. A full redraw would move the cursor and clear what they're typing.
+async function showReadyExplanation() {
+  const view = await api(`/api/view?${new URLSearchParams({ set: state.setId })}`);
+  const card = document.querySelector("article[data-open-step]");
+  const step = card && view.problem && (view.problem.steps || []).find((candidate) => candidate.id === card.dataset.openStep);
+  if (!step || !state.view.problem || view.problem.id !== state.view.problem.id) return;
+  const parts = card.querySelector("[data-explanation]") ? [] : explainParts(step);
+  const waiting = card.querySelector("[data-explaining]");
+  if (waiting) waiting.replaceWith(...parts);
+  else if (card.querySelector(".feedback")) card.querySelector(".feedback").after(...parts);
+  const button = card.querySelector("[data-action='explain']");
+  const next = explainButton(step);
+  if (button && next) button.replaceWith(next);
 }
 
 function rememberFocus() {
@@ -445,16 +473,25 @@ function feedbackBox(step) {
 }
 
 function explainParts(step) {
-  return (step.explanations || []).map((entry) => el("div", { class: "note-box", "data-explanation": "true" },
+  const parts = (step.explanations || []).map((entry) => el("div", { class: "note-box", "data-explanation": "true" },
     el("h4", { text: entry.from === "sympy" ? "What SymPy found" : "Why this is wrong" }),
     ...paragraphs(entry.text)));
+  if (step.explaining) {
+    parts.push(el("div", { class: "note-box explaining", role: "status", "data-explaining": "true" },
+      el("span", { class: "spinner", "aria-hidden": "true" }),
+      el("span", { text: "Claude is working out why. It will appear here when it's ready, and you can keep working." })));
+  }
+  return parts;
 }
 
 function explainButton(step) {
   if (!step.can_explain) return null;
-  const explain = el("button", { text: "Explain why", "data-action": "explain" });
-  explain.addEventListener("click", () => runAsk({ action: "explain", step: step.id }, explain, "Asking Claude..."));
-  if (step.explanations && step.explanations.length) explain.disabled = true;
+  const explain = el("button", { text: step.explaining ? "Explaining..." : "Explain why", "data-action": "explain" });
+  explain.addEventListener("click", async () => {
+    const reply = await run({ action: "explain", step: step.id }, explain);
+    if (reply && reply.ask) watchExplanation(reply.ask);
+  });
+  if (step.explaining || (step.explanations && step.explanations.length)) explain.disabled = true;
   return explain;
 }
 

@@ -794,12 +794,24 @@ class Engine:
             for earlier in record["explanations"]:
                 if earlier["answer"] == answer:
                     return {"ask": None, "view": self.view(set_id, problem_id)}
+            pending = self._explaining(set_id, problem_id, step_id, answer)
+            if pending:
+                return {"ask": pending, "view": self.view(set_id, problem_id)}
             request = prompts.explain(worksheet, problem, step, answer, record["readback"], record["diagnosis"])
             ask_id = self._start_ask(request, {
                 "kind": "explain", "set": set_id, "problem": problem_id, "step": step_id, "answer": answer,
                 "fallback": record["diagnosis"],
             })
         return {"ask": ask_id, "view": self.view(set_id, problem_id)}
+
+    def _explaining(self, set_id: str, problem_id: str, step_id: str, answer: str) -> str | None:
+        """The ask still working on this answer, so the page can show it and a second click can't repeat it."""
+        for ask_id, ask in list(self.asks.items()):
+            meta = ask["meta"]
+            if (ask["state"] == "pending" and meta.get("kind") == "explain" and meta.get("set") == set_id
+                    and meta.get("problem") == problem_id and meta.get("step") == step_id and meta.get("answer") == answer):
+                return ask_id
+        return None
 
     def walkthrough(self, set_id: str, problem_id: str) -> dict:
         with self.lock:
@@ -1150,6 +1162,7 @@ class Engine:
             return {**view, **_citation(step)}
         view["explanations"] = [e for e in record["explanations"] if e["answer"] == record["last_wrong"]]
         view["can_explain"] = record["status"] == "incorrect" and bool(record["last_wrong"])
+        view["explaining"] = self._explaining(worksheet["id"], problem["id"], step["id"], record["last_wrong"])
         view["own"] = record["own"]
         return view
 
