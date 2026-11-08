@@ -43,6 +43,7 @@ The program starts with an empty library. Nothing of anyone else's comes with it
 
     hooks/register.tsx      /worksheet, the tools, starts the server, asks Claude
     skills/make-set/        how Claude makes a set and extends the repertoire
+    skills/make-course/     how Claude runs an experimental course, one section at a time
     server/mathparse.py     LaTeX to SymPy
     server/equiv.py         exact equality: disproof by evaluation, then symbolic proof
     server/grade.py         one mathematical check per step type
@@ -55,6 +56,8 @@ The program starts with an empty library. Nothing of anyone else's comes with it
     server/library.py       the class library: saved text, search and overviews
     server/sources.py       opens each cited page and checks its quote
     server/documents.py     study guides and equation sheets: plots, examples, drawings
+    server/courses.py       courses: syllabus rules, unlocking, mastery and the overview
+    server/course_items.py  course check items: multiple choice, numeric and short answer
     web/                    the page, with MathLive and KaTeX vendored
     tests/                  see below
 
@@ -65,6 +68,7 @@ Your data lives in `~/.local/share/math-worksheet/`, never in this folder, so sh
     error_log.json
     coverage.json which methods were checked against which textbook sections
     repertoire/   methods added after install
+    courses/      each course, and a short overview of it that Claude reads first
 
 ## The home page
 
@@ -128,6 +132,22 @@ exam mode. Both can be undone, keep your work, and leave the error log alone.
 New generated sets start with a few short written questions on when and why methods
 apply. They're the one thing here SymPy can't verify: Claude writes the reference
 answers and judges your replies by the mathematics, and the page says so.
+
+## Courses (experimental)
+
+A course teaches a topic you're new to, in any subject. **Courses** on the home page lists
+them, and the **New** form starts one from a goal of a sentence or more. Claude researches
+the topic with checked sources, agrees a teaching style, the kinds of checks, a mastery bar
+and pacing with you in the terminal, and saves a syllabus of chapters and sections with
+prerequisites. Then **Generate** makes one section at a time: a lesson, which is an ordinary
+study guide, and a check, which is an ordinary set.
+
+A section opens only once its prerequisites are mastered or tested out. The server decides
+that from your results, never from what Claude says. Multiple choice and numeric items are
+graded exactly, with decimals allowed and the unit always stated. Short answers are judged
+by Claude and labeled that way. Course misses are kept out of the worksheet error log, so
+they don't change how ODE problems are weighted. Deleting a course keeps its lessons and
+checks. It's experimental, so the data format may still change.
 
 ## Tests
 
