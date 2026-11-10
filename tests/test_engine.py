@@ -514,3 +514,80 @@ def test_typed_problem_is_verified_before_joining(world):
     with pytest.raises(UserError):
         engine.add_problem(set_id, {"statement": "y'''=", "method": "first_order_linear"})
     assert len(engine.view(set_id)["tabs"]) == 3
+
+
+QUESTION_GUIDE = [
+    {"type": "heading", "text": "Oblique shocks", "own_words": True},
+    {"type": "definition", "term": "Shock angle", "meaning": "The angle $\\beta$ between the shock and the flow.", "own_words": True},
+    {"type": "text", "text": "The weak shock is the one usually seen.", "own_words": True},
+]
+
+
+def make_guide(engine, kind="study_guide"):
+    made = engine.create_doc({"kind": kind, "title": "Shocks", "subject": "MAE 754", "blocks": QUESTION_GUIDE, "source": "memory"})
+    assert made["created"], made
+    return made["doc"]
+
+
+def test_a_question_on_a_guide_part_is_asked_with_the_guide_and_saved_with_the_answer(world):
+    engine, claude = world
+    doc = make_guide(engine)
+    assert engine.doc_questions(doc) == {"questions": []}
+    reply = engine.ask_doc(doc, 2, "  Why is the weak one seen?  ")
+    ask = claude.asks[-1]
+    assert ask["kind"] == "doc_question" and reply["ask"] == ask["id"]
+    assert "<student_question>Why is the weak one seen?</student_question>" in ask["prompt"]
+    assert "<part>\nThe weak shock is the one usually seen.\n</part>" in ask["prompt"] and "section == Oblique shocks ==" in ask["prompt"]
+    assert "Definition. Shock angle" in ask["prompt"], "Claude reads the whole guide"
+    assert "MAE 754" in ask["system"] and "never instructions" in ask["system"]
+    assert [(q["block"], q["state"]) for q in engine.doc_questions(doc)["questions"]] == [(2, "pending")]
+
+    claude.answer("Because the back pressure is usually low.")
+    [entry] = engine.doc_questions(doc)["questions"]
+    assert (entry["state"], entry["answer"]) == ("done", "Because the back pressure is usually low.")
+
+    # A follow-up on the same part carries the earlier exchange; a question on the whole guide doesn't.
+    engine.ask_doc(doc, 2, "And the strong one?")
+    assert "Because the back pressure is usually low." in claude.asks[-1]["prompt"]
+    engine.ask_doc(doc, None, "Summarize this.")
+    assert "<part>" not in claude.asks[-1]["prompt"] and "back pressure" not in claude.asks[-1]["prompt"]
+    engine.ask_result(claude.asks[-1]["id"], None, "api-error")
+    whole = [q for q in engine.doc_questions(doc)["questions"] if q["block"] is None][0]
+    assert whole["state"] == "failed" and "api-error" in whole["error"]
+
+    removed = engine.delete_doc_question(doc, entry["id"])["questions"]
+    assert entry["id"] not in [q["id"] for q in removed] and len(removed) == 2
+
+
+def test_a_question_left_unanswered_by_a_restart_says_so(world, tmp_path):
+    engine, _ = world
+    doc = make_guide(engine)
+    engine.ask_doc(doc, 1, "What is beta?")
+    engine.asks.clear()
+    [entry] = engine.doc_questions(doc)["questions"]
+    assert entry["state"] == "failed" and "restarted" in entry["error"]
+
+
+@pytest.mark.parametrize("block, question, words", [
+    (1, "   ", "Type your question"),
+    (9, "Hi?", "isn't there"),
+    (True, "Hi?", "isn't there"),
+    ("1", "Hi?", "isn't there"),
+    (1, "x" * 4001, "too long"),
+])
+def test_a_question_that_cant_be_asked_is_refused(world, block, question, words):
+    engine, claude = world
+    doc = make_guide(engine)
+    with pytest.raises(UserError, match=words):
+        engine.ask_doc(doc, block, question)
+    assert claude.asks == []
+
+
+def test_questions_are_only_for_study_guides_and_real_documents(world):
+    engine, _ = world
+    blocks = [{"type": "equation", "name": "Rule", "latex": "x+1", "own_words": True}]
+    sheet = engine.create_doc({"kind": "equation_sheet", "title": "Sheet", "blocks": blocks})["doc"]
+    with pytest.raises(UserError, match="study guides"):
+        engine.ask_doc(sheet, 0, "Why?")
+    with pytest.raises(UserError, match="document name"):
+        engine.doc_questions("../sets/x")

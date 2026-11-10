@@ -206,6 +206,10 @@ class App:
             return engine.course_request(body)
         if action == "course_delete":
             return engine.course_delete(body.get("id", ""), bool(body.get("remove_items")))
+        if action == "doc_ask":
+            return engine.ask_doc(body.get("doc", ""), body.get("block"), body.get("question", ""))
+        if action == "doc_question_delete":
+            return engine.delete_doc_question(body.get("doc", ""), body.get("id", ""))
         if action == "retry_request":
             return engine.retry_request(body.get("id", ""))
         if action == "dismiss_request":
@@ -428,6 +432,8 @@ def make_handler(app: App):
                     return self._json(app.engine.library.search(query.get("q", ""), limit=200))
                 if url.path == "/api/doc":
                     return self._json(app.engine.load_doc(query["id"]))
+                if url.path == "/api/doc_questions":
+                    return self._json(app.engine.doc_questions(query["id"]))
                 if url.path == "/api/library":
                     return self._json(app.engine.home_view())
                 if url.path == "/api/view":

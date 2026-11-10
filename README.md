@@ -69,6 +69,7 @@ Your data lives in `~/.local/share/math-worksheet/`, never in this folder, so sh
     coverage.json which methods were checked against which textbook sections
     repertoire/   methods added after install
     courses/      each course, and a short overview of it that Claude reads first
+    doc_questions/ questions you asked on each study guide, with Claude's answers
 
 ## The home page
 
@@ -111,6 +112,13 @@ written, and it runs nothing inside it. A zip holds your actual files, so share 
 A study guide's **Quick reference** button opens a side panel of tabs for its definitions, equations
 and nomenclature, which stay open while you scroll. **Expand** makes it a larger pop-up, which
 collapses back to the side panel.
+
+## Questions on a study guide
+
+Each part of a study guide has a **?** button, and **Ask a question** jumps to a Questions box
+at the end for the whole guide. A question goes to Claude through the mod, like **Explain why**
+on a worksheet, with the guide's text, the part asked about and earlier questions on it. Answers
+show under that part, labeled as unchecked, and are saved in `doc_questions/`.
 
 ## Sources
 

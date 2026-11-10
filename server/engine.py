@@ -359,6 +359,61 @@ class Engine:
             raise UserError(f"There's no document called {doc_id}.")
         return read_json(path, None)
 
+    # --- Questions on a study guide ------------------------------------------
+
+    def _questions_path(self, doc_id: str) -> Path:
+        self._doc_path(doc_id)
+        return self.data / "doc_questions" / f"{doc_id}.json"
+
+    def doc_questions(self, doc_id: str) -> dict:
+        with self.lock:
+            questions = read_json(self._questions_path(doc_id), [])
+            for entry in questions:
+                # The server restarted while Claude was answering, so no answer will come.
+                if entry["state"] == "pending" and entry.get("ask") not in self.asks:
+                    entry.update(state="failed", error="Claude didn't answer before the program restarted. Ask again.")
+            return {"questions": questions}
+
+    def ask_doc(self, doc_id: str, block, question: str) -> dict:
+        question = question.strip()
+        if not question:
+            raise UserError("Type your question first.")
+        if len(question) > 4000:
+            raise UserError("That question is too long. Keep it under 4,000 characters.")
+        with self.lock:
+            doc = self.load_doc(doc_id)
+            if doc["kind"] != "study_guide":
+                raise UserError("Questions work on study guides.")
+            if block is not None and (isinstance(block, bool) or not isinstance(block, int) or not 0 <= block < len(doc["blocks"])):
+                raise UserError("That part of the guide isn't there anymore. Reload the page.")
+            questions = self.doc_questions(doc_id)["questions"]
+            earlier = [entry for entry in questions if entry["block"] == block and entry["state"] == "done"][-3:]
+            entry = {"id": uuid.uuid4().hex, "block": block, "question": question, "state": "pending",
+                     "answer": "", "error": "", "asked_at": time.time()}
+            entry["ask"] = self._start_ask(prompts.doc_question(doc, block, question, earlier),
+                                           {"kind": "doc_question", "doc": doc_id, "question": entry["id"]})
+            questions.append(entry)
+            self._questions_path(doc_id).parent.mkdir(exist_ok=True)
+            write_json(self._questions_path(doc_id), questions)
+            return {"ask": entry["ask"], "questions": questions}
+
+    def delete_doc_question(self, doc_id: str, question_id: str) -> dict:
+        with self.lock:
+            questions = [entry for entry in self.doc_questions(doc_id)["questions"] if entry["id"] != question_id]
+            if self._questions_path(doc_id).exists():
+                write_json(self._questions_path(doc_id), questions)
+            return {"questions": questions}
+
+    def _finish_doc_question(self, meta: dict, text: str | None, error: str) -> None:
+        questions = read_json(self._questions_path(meta["doc"]), [])
+        for entry in questions:
+            if entry["id"] == meta["question"]:
+                if text:
+                    entry.update(state="done", answer=text)
+                else:
+                    entry.update(state="failed", error=f"Claude couldn't be reached ({error}). Ask again.")
+        write_json(self._questions_path(meta["doc"]), questions)
+
     # --- The home page and requests for new sets -----------------------------
 
     def home_view(self) -> dict:
@@ -1176,7 +1231,7 @@ class Engine:
             ask["state"] = "done"
             meta = ask["meta"]
             handler = {"explain": self._finish_explain, "walkthrough": self._finish_walkthrough,
-                       "own_method": self._finish_own_method}[meta["kind"]]
+                       "own_method": self._finish_own_method, "doc_question": self._finish_doc_question}[meta["kind"]]
             handler(meta, text, error)
 
     def _finish_explain(self, meta: dict, text: str | None, error: str) -> None:

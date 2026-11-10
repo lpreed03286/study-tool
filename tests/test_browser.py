@@ -60,6 +60,7 @@ class Server:
                     "walkthrough": "Take $y'+y=1$ as an example. Multiply by $e^{x}$.",
                     "own_method": '{"valid": true, "reason": "That is a valid path."}',
                     "discussion": '{"valid": true, "reason": "You read the plot correctly."}',
+                    "doc_question": "The roots are complex, so $y$ oscillates.\n\nThat is why it is underdamped.",
                     "concept": '{"valid": false, "reason": "You named one method, but there is a second one."}'
                     if "only one" in event["prompt"] else '{"valid": true, "reason": "Both methods are right."}'}[event["kind"]]
             self.claude_replies.append(event)
@@ -916,7 +917,7 @@ def test_a_study_guide_lists_opens_and_draws_every_block(server, home, guide):
     assert home.title().startswith("Guide") and home.locator("#home-title").inner_text().startswith("Guide")
     for hidden in ("#set-picker", "#exam-toggle-label", "#fade-row", "#tabs", "#tools", "#new-set", "#home-sort"):
         assert not home.locator(hidden).is_visible(), hidden
-    assert home.locator(".doc h2").inner_text() == "Damped motion"
+    assert home.locator(".doc-body h2").inner_text() == "Damped motion"
     assert home.locator(".doc .katex-error").count() == 0 and home.locator(".doc .katex").count() >= 5
     assert home.locator(".doc-equation .name").inner_text() == "Characteristic equation"
     assert home.locator(".doc-table").first.locator("tr").count() == 3
@@ -937,6 +938,42 @@ def test_a_study_guide_lists_opens_and_draws_every_block(server, home, guide):
 
     home.locator("#home-link").click()
     home.locator(f".set-row[data-doc='{guide}']").wait_for()
+
+
+def test_a_question_on_a_guide_part_is_answered_under_it_and_kept(server, home, guide):
+    home.goto(f"{server.url}&doc={guide}")
+    home.locator(".doc").wait_for()
+    part = home.locator(".doc-item.asked").nth(1)
+    box = part.locator(".doc-questions")
+    assert not box.is_visible(), "boxes stay out of the way until asked for"
+    part.locator(".doc-ask-button").click()
+    assert box.is_visible() and box.locator("textarea").evaluate("n => n === document.activeElement")
+    box.locator("textarea").fill("Why does it oscillate?")
+    box.locator("textarea").press("Control+Enter")
+    answer = box.locator(".doc-q[data-state='done'] .doc-q-answer")
+    answer.wait_for()
+    assert answer.locator("p").count() == 2 and answer.locator(".katex").count() == 1
+    assert "not checked against your sources" in answer.inner_text()
+    assert "Why does it oscillate?" in box.inner_text() and box.locator("textarea").input_value() == ""
+    asked = server.claude_replies[-1]
+    assert asked["kind"] == "doc_question" and "Why does it oscillate?" in asked["prompt"]
+    home.screenshot(path=SHOTS / f"30b-guide-question-{os.environ.get('WORKSHEET_BROWSER', 'chromium')}.png")
+
+    # Saved with the guide: after a reload the button counts it, and the whole-guide box is separate.
+    home.reload()
+    home.locator(".doc-ask-button.has-questions").wait_for()
+    assert part.locator(".doc-ask-button").inner_text() == "? 1"
+    home.locator("#doc-ask-jump").click()
+    whole = home.locator(".doc-ask-all .doc-questions")
+    assert whole.locator("textarea").evaluate("n => n === document.activeElement") and whole.locator(".doc-q").count() == 0
+
+    home.emulate_media(media="print")
+    assert not home.locator(".doc-ask-button").first.is_visible() and not home.locator(".doc-ask-all").is_visible()
+    home.emulate_media(media="screen")
+
+    part.locator(".doc-ask-button").click()
+    part.locator(".doc-q-remove").click()
+    home.wait_for_function("!document.querySelector('.doc-ask-button.has-questions')")
 
 
 def test_printing_shows_the_title_and_solutions_without_the_page_controls(server, home, guide):

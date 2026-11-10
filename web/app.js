@@ -2097,20 +2097,136 @@ async function startDoc() {
     }
   }
   const numberOf = (source) => cited.findIndex((seen) => keyOf(seen) === keyOf(source)) + 1;
-  const nodes = doc.blocks.flatMap((block) => {
+  const guide = doc.kind === "study_guide";
+  const nodes = doc.blocks.flatMap((block, index) => {
     const node = docBlock(block);
     const row = sourceRow(block, numberOf);
+    // Every part of a guide can be asked about, so each gets its own wrapper.
+    if (guide) return [el("div", { class: "doc-item asked", "data-block": index }, askButton(index), node, row, questionBox(index))];
     if (!row) return [node];
     // A heading stays a direct child, so it can span an equation sheet's columns.
     return block.type === "heading" ? [node, row] : [el("div", { class: "doc-item" }, node, row)];
   });
-  if (doc.kind === "study_guide") setupReference(doc, numberOf);
+  if (guide) setupReference(doc, numberOf);
   $("main").replaceChildren(el("article", { class: `doc doc-${doc.kind}` },
     el("h1", { class: "doc-print-title", text: doc.title }),
-    el("div", { class: "doc-meta" }, ...facts.map((fact) => el("span", { class: "chip", text: fact }))),
+    el("div", { class: "doc-meta" }, ...facts.map((fact) => el("span", { class: "chip", text: fact })),
+      guide && el("button", { id: "doc-ask-jump", type: "button", text: "Ask a question", onclick: () => openQuestionBox(null) })),
     el("div", { class: "doc-body" }, ...nodes),
+    guide && el("section", { class: "doc-ask-all" }, el("h2", { text: "Questions" }),
+      el("p", { class: "muted", text: "Ask about anything in this guide, or press ? beside any part to ask about just that part." }),
+      questionBox(null)),
     cited.length ? docSourceList(cited) : null,
     el("p", { class: "muted doc-source", text: docSourceNote(doc, cited.length > 0) })));
+  if (guide) {
+    docQuestions.list = (await api(`/api/doc_questions?${new URLSearchParams({ id: DOC_ID })}`)).questions;
+    drawQuestions();
+    const waiting = docQuestions.list.filter((entry) => entry.state === "pending");
+    if (waiting.length) Promise.all(waiting.map((entry) => waitForAsk(entry.ask))).then(reloadQuestions);
+  }
+}
+
+// --- Questions on a study guide ----------------------------------------------
+
+const docQuestions = { list: [], boxes: new Map() };
+
+function askButton(block) {
+  return el("button", {
+    type: "button", class: "doc-ask-button", text: "?", title: "Ask a question about this part",
+    "aria-label": "Ask a question about this part", onclick: () => openQuestionBox(block),
+  });
+}
+
+// block is the index of a part of the guide, or null for the whole guide.
+function questionBox(block) {
+  const field = el("textarea", {
+    rows: 2, placeholder: block === null ? "What would you like to ask about this guide?" : "What's unclear about this part?",
+    "aria-label": "Your question",
+  });
+  const send = el("button", { type: "button", class: "primary", text: "Ask Claude" });
+  send.addEventListener("click", () => askDoc(block, field, send));
+  field.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) send.click();
+  });
+  const form = el("div", { class: "doc-q-form" }, field, el("div", { class: "doc-q-actions" }, send,
+    block === null ? null : el("button", { type: "button", text: "Close", onclick: () => { box.hidden = true; } }),
+    el("span", { class: "muted", text: "Ctrl+Enter sends" })));
+  const box = el("div", { class: "doc-questions", hidden: block !== null }, el("div", { class: "doc-q-list" }), form);
+  docQuestions.boxes.set(block, box);
+  return box;
+}
+
+function openQuestionBox(block) {
+  const box = docQuestions.boxes.get(block);
+  box.hidden = false;
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  box.querySelector("textarea").focus({ preventScroll: true });
+}
+
+function questionEntry(entry) {
+  const answer = entry.state === "pending"
+    ? el("p", { class: "muted doc-q-wait", text: "Claude is answering…" })
+    : entry.state === "failed"
+      ? el("p", { class: "feedback restate", text: entry.error })
+      : el("div", { class: "doc-q-answer" },
+        ...entry.answer.split(/\n\s*\n/).map((paragraph) => el("p", { html: richText(paragraph) })),
+        el("span", { class: "chip warn", text: "Claude's answer, not checked against your sources" }));
+  const remove = el("button", { type: "button", class: "doc-q-remove", text: "Remove" });
+  remove.addEventListener("click", async () => {
+    try {
+      const reply = await api("/api/action", { method: "POST", body: JSON.stringify({ action: "doc_question_delete", doc: DOC_ID, id: entry.id }) });
+      docQuestions.list = reply.questions;
+      drawQuestions();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  return el("div", { class: "doc-q", "data-state": entry.state },
+    el("p", { class: "doc-q-asked" }, el("b", { text: "You asked: " }), el("span", { html: richText(entry.question) })),
+    answer, entry.state === "pending" ? null : remove);
+}
+
+function drawQuestions() {
+  for (const [block, box] of docQuestions.boxes) {
+    const mine = docQuestions.list.filter((entry) => entry.block === block);
+    box.querySelector(".doc-q-list").replaceChildren(...mine.map(questionEntry));
+    if (mine.some((entry) => entry.state === "pending")) box.hidden = false;
+    if (block === null) continue;
+    const button = box.parentElement.querySelector(".doc-ask-button");
+    button.textContent = mine.length ? `? ${mine.length}` : "?";
+    button.classList.toggle("has-questions", mine.length > 0);
+  }
+}
+
+async function reloadQuestions() {
+  try {
+    docQuestions.list = (await api(`/api/doc_questions?${new URLSearchParams({ id: DOC_ID })}`)).questions;
+    drawQuestions();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function askDoc(block, field, button) {
+  const question = field.value.trim();
+  if (!question) {
+    toast("Type your question first.");
+    return;
+  }
+  button.disabled = true;
+  try {
+    const reply = await api("/api/action", { method: "POST", body: JSON.stringify({ action: "doc_ask", doc: DOC_ID, block, question }) });
+    field.value = "";
+    docQuestions.list = reply.questions;
+    drawQuestions();
+    button.disabled = false;
+    await waitForAsk(reply.ask);
+    await reloadQuestions();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // --- The help page -----------------------------------------------------------

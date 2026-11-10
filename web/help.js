@@ -184,6 +184,17 @@ const HELP_GROUPS = [
         ],
       },
       {
+        id: "questions", title: "Asking questions on a guide",
+        what: "Every part of a study guide has a [[?]] button. Press it to ask Claude about just that part, or use [[Ask a question]] at the top, which jumps to the Questions box at the end, for anything in the guide.",
+        example: "Not sure why the caret's $L/D$ is $\\cot\\theta$? Press [[?]] beside that equation and ask. The answer appears under it, and the button shows how many questions that part has.",
+        how: [
+          "Claude reads the whole guide along with the part you asked about, and your earlier questions on that part, so you can ask follow-ups.",
+          "Your questions and answers are saved with the guide, so they're still there next time. [[Remove]] deletes one.",
+          "Answers are Claude's own explanation, not checked against your sources. Check anything important against your book.",
+          "Ctrl+Enter sends a question. Answered questions print with the guide, but the buttons and boxes don't.",
+        ],
+      },
+      {
         id: "reference", title: "Quick reference",
         what: "On a study guide, [[Quick reference]] opens a side panel with Definitions, Equations and Nomenclature tabs, which stays open while you scroll.",
         example: "Reading about energy and forgot what $x_m$ means? Press [[Quick reference]] and open the Nomenclature tab, without losing your place.",
