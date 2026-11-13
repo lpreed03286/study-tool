@@ -58,6 +58,7 @@ The program starts with an empty library. Nothing of anyone else's comes with it
     server/documents.py     study guides and equation sheets: plots, examples, drawings
     server/courses.py       courses: syllabus rules, unlocking, mastery and the overview
     server/course_items.py  course check items: multiple choice, numeric and short answer
+    server/palette.py       the dark theme from a desktop base16 palette, if there is one
     web/                    the page, with MathLive and KaTeX vendored
     tests/                  see below
 
@@ -100,6 +101,13 @@ the pages it needs. Files live in `library/files/`.
 
 The **Help** button on the home page explains every feature, with an example and tips. Its text is in
 `web/help.js`, so update it when a feature changes. A test checks that every button it names exists.
+
+## Colors
+
+The page is dark unless you choose light. If `~/.config/stylix/palette.json` holds a dark base16 palette
+(Stylix writes one), dark mode uses its colors instead of the built-in ones, read again on every page load,
+so a desktop theme switch shows after a refresh. Set `WORKSHEET_PALETTE` to use another file. Light mode and
+printing keep their own colors.
 
 ## Exporting and importing
 

@@ -209,3 +209,30 @@ def test_a_new_library_starts_empty(tmp_path):
         assert call(ready, "/api/library") == {"sets": [], "docs": [], "requests": []}
     finally:
         process.kill()
+
+
+def test_dark_theme_follows_a_desktop_palette_and_skips_a_light_one(tmp_path):
+    nord_black = {"base00": "000000", "base01": "3b4252", "base02": "434c5e", "base03": "4c566a",
+                  "base04": "d8dee9", "base05": "e5e9f0", "base06": "eceff4", "base07": "8fbcbb",
+                  "base08": "bf616a", "base09": "d08770", "base0A": "ebcb8b", "base0B": "a3be8c",
+                  "base0C": "88c0d0", "base0D": "81a1c1", "base0E": "b48ead", "base0F": "5e81ac",
+                  "scheme": "Nord Black"}
+    palette = tmp_path / "palette.json"
+    palette.write_text(json.dumps(nord_black))
+    process, ready = start(tmp_path / "data", env={"WORKSHEET_PALETTE": str(palette)})
+
+    def sheet():
+        with urllib.request.urlopen(f"http://127.0.0.1:{ready['port']}/palette.css", timeout=20) as reply:
+            assert reply.headers["Content-Type"].startswith("text/css")
+            return reply.read().decode()
+
+    try:
+        css = sheet()
+        assert "@media screen" in css and ':root[data-theme="dark"]' in css
+        assert "--bg: #000000;" in css and "--accent: #81a1c1;" in css and "--ink: #e5e9f0;" in css
+        palette.write_text(json.dumps({**nord_black, "base00": "eceff4", "base05": "2e3440"}))
+        assert sheet() == ""
+        palette.unlink()
+        assert sheet() == ""
+    finally:
+        process.kill()

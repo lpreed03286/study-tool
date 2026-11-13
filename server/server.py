@@ -33,6 +33,7 @@ sys.path.insert(0, str(HERE))
 from courses import CourseError  # noqa: E402
 from engine import Engine, UserError  # noqa: E402
 from library import MAX_FILE_BYTES, MAX_IMPORT_BYTES, LibraryError  # noqa: E402
+from palette import palette_css  # noqa: E402
 from storage import read_json, write_json  # noqa: E402
 
 WEB = HERE.parent / "web"
@@ -315,6 +316,9 @@ def make_handler(app: App):
                 return self._api_get(url)
             if not self._trusted_origin():
                 return self._send(HTTPStatus.FORBIDDEN, b"forbidden", "text/plain")
+            if url.path == "/palette.css":
+                # Read on every load, so a desktop theme switch shows on the next refresh.
+                return self._send(HTTPStatus.OK, palette_css().encode(), "text/css; charset=utf-8", {"Cache-Control": "no-store"})
             self._static(url.path)
 
         def _source_file(self, url) -> None:
